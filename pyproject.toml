@@ -1,0 +1,28 @@
+[project]
+name = "open-voice-assistant"
+version = "0.1.0"
+description = "AI-powered voice assistant with streaming STT, TTS, and OpenAI Agents SDK"
+readme = "README.md"
+authors = [
+    { name = "Bryan Furia", email = "bryan.furia@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "faster-whisper==1.2.1",
+    "piper-tts==1.4.2",
+    "openai-agents==0.13.4",
+    "aioesphomeapi==44.6.2",
+    "numpy==2.4.4",
+    "pydantic==2.12.5",
+    "pydantic-settings==2.13.1",
+]
+
+[dependency-groups]
+dev = ["esphome==2026.3.2"]
+
+[project.scripts]
+ova = "open_voice_assistant.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.9.26,<0.10.0"]
+build-backend = "uv_build"
