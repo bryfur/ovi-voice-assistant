@@ -21,7 +21,7 @@ class PiperTTS(TTS):
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._voice = None
-        self.sample_rate: int = 22050
+        self.sample_rate: int = 16000  # output rate (resampled from model native)
         self.sample_width: int = 2  # 16-bit
         self.channels: int = 1  # mono
 
@@ -31,8 +31,8 @@ class PiperTTS(TTS):
         model_path = self._resolve_model(self._settings.tts_model)
         logger.info("Loading piper TTS model: %s", model_path)
         self._voice = PiperVoice.load(str(model_path), use_cuda=False)
-        self.sample_rate = self._voice.config.sample_rate
-        logger.info("TTS model loaded (%dHz)", self.sample_rate)
+        logger.info("TTS model loaded (native %dHz, output %dHz)",
+                     self._voice.config.sample_rate, self.sample_rate)
 
     def _resolve_model(self, model_name: str) -> Path:
         if Path(model_name).exists():
@@ -51,7 +51,7 @@ class PiperTTS(TTS):
         return model_path
 
     def synthesize(self, text: str) -> bytes:
-        """Synthesize text to raw 16-bit PCM at the model's native sample rate.
+        """Synthesize text to raw 16-bit PCM at self.sample_rate.
 
         CPU-bound — callers should run in an executor.
         """
@@ -60,12 +60,26 @@ class PiperTTS(TTS):
 
         all_audio = []
         for chunk in self._voice.synthesize(text):
-            all_audio.append(chunk.audio_int16_array)
+            audio = chunk.audio_int16_array
+            if chunk.sample_rate != self.sample_rate:
+                audio = self._resample(audio, chunk.sample_rate, self.sample_rate)
+            all_audio.append(audio)
 
         if not all_audio:
             return b""
 
         return np.concatenate(all_audio).tobytes()
+
+    @staticmethod
+    def _resample(audio: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
+        ratio = dst_rate / src_rate
+        new_length = int(len(audio) * ratio)
+        indices = np.arange(new_length) / ratio
+        indices = np.clip(indices, 0, len(audio) - 1)
+        left = np.floor(indices).astype(int)
+        right = np.minimum(left + 1, len(audio) - 1)
+        frac = indices - left
+        return (audio[left] * (1 - frac) + audio[right] * frac).astype(np.int16)
 
     async def synthesize_stream(self, text_chunks: AsyncIterator[str]) -> AsyncIterator[bytes]:
         """Stream TTS: accumulate text into sentences, synthesize each eagerly."""
