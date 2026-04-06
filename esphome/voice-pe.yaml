@@ -212,6 +212,14 @@ binary_sensor:
         then:
           - switch.toggle: master_mute_switch
 
+button:
+  - platform: template
+    id: announce_trigger
+    name: "Announce"
+    entity_category: diagnostic
+    on_press:
+      - voice_assistant.start:
+
 switch:
   - platform: gpio
     pin: GPIO47

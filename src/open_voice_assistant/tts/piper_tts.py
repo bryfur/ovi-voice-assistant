@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 import numpy as np
 
 from open_voice_assistant.config import Settings
-from open_voice_assistant.tts import TTS
+from open_voice_assistant.tts import TTS, resample
 
 logger = logging.getLogger(__name__)
 
@@ -62,24 +62,13 @@ class PiperTTS(TTS):
         for chunk in self._voice.synthesize(text):
             audio = chunk.audio_int16_array
             if chunk.sample_rate != self.sample_rate:
-                audio = self._resample(audio, chunk.sample_rate, self.sample_rate)
+                audio = resample(audio, chunk.sample_rate, self.sample_rate)
             all_audio.append(audio)
 
         if not all_audio:
             return b""
 
         return np.concatenate(all_audio).tobytes()
-
-    @staticmethod
-    def _resample(audio: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
-        ratio = dst_rate / src_rate
-        new_length = int(len(audio) * ratio)
-        indices = np.arange(new_length) / ratio
-        indices = np.clip(indices, 0, len(audio) - 1)
-        left = np.floor(indices).astype(int)
-        right = np.minimum(left + 1, len(audio) - 1)
-        frac = indices - left
-        return (audio[left] * (1 - frac) + audio[right] * frac).astype(np.int16)
 
     async def synthesize_stream(self, text_chunks: AsyncIterator[str]) -> AsyncIterator[bytes]:
         """Stream TTS: accumulate text into sentences, synthesize each eagerly."""

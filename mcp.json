@@ -1,0 +1,9 @@
+[
+  {
+    "command": "npx",
+    "args": [
+      "-y",
+      "@dangahagan/weather-mcp"
+    ]
+  }
+]

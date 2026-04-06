@@ -40,6 +40,7 @@ class Settings(BaseSettings):
 
     # STT (faster-whisper)
     stt_model: str = "base.en"
+    stt_device: str = "cpu"  # "cpu" or "cuda"
     stt_language: str = "en"
     stt_beam_size: int = 1
     stt_compute_type: str = "int8"
@@ -62,6 +63,14 @@ class Settings(BaseSettings):
         "If your response asks a question or requires a follow-up from the user, "
         "end your response with [LISTEN]. Only use [LISTEN] when you need the user to respond."
     )
+
+    # MCP tool servers — JSON list or @path/to/file.json
+    # e.g. '[{"command": "npx", "args": ["-y", "@dangahagan/weather-mcp"]}]'
+    mcp_servers: str = ""
+
+    # Sub-agents — JSON list or @path/to/file.json
+    # Each entry: {name, description, instructions, mcp_servers: [{command, args}]}
+    agents: str = ""
 
     # Mic audio format (from Voice PE: 16-bit PCM, 16kHz, mono)
     mic_sample_rate: int = 16000

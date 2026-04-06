@@ -1,0 +1,10 @@
+[
+  {
+    "name": "web_search",
+    "description": "Search the web or browse a URL to find current information. Use for news, sports scores, facts, or anything that needs up-to-date data from the internet.",
+    "instructions": "You are a web browsing assistant. Use the browser tools to navigate pages, search for information, and extract content. Return a concise summary of what you found.",
+    "mcp_servers": [
+      {"command": "npx", "args": ["-y", "@playwright/mcp", "--headless"]}
+    ]
+  }
+]

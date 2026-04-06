@@ -4,7 +4,7 @@ import logging
 
 from open_voice_assistant.config import DeviceConfig, Settings
 from open_voice_assistant.device import DeviceConnection
-from open_voice_assistant.voice_assistant_pipeline import VoiceAssistantPipeline
+from open_voice_assistant.voice_assistant import VoiceAssistant
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +13,7 @@ class DeviceManager:
     """Creates and manages DeviceConnection instances."""
 
     def __init__(self, devices: list[DeviceConfig], settings: Settings,
-                 pipeline: VoiceAssistantPipeline) -> None:
+                 pipeline: VoiceAssistant) -> None:
         self._connections = [
             DeviceConnection(device, settings, pipeline)
             for device in devices

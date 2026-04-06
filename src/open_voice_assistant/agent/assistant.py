@@ -1,14 +1,19 @@
-"""AI agent using OpenAI Agents SDK with streaming."""
+"""AI agent using OpenAI Agents SDK with streaming and MCP tool support."""
 
+import asyncio
+import json
 import logging
 from collections.abc import AsyncIterator
 
 from agents import Agent, RunConfig, Runner, SQLiteSession
+from agents.mcp import MCPServerStdio
 from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
 from agents.stream_events import RawResponsesStreamEvent
 from openai import AsyncOpenAI
 from openai.types.responses import ResponseTextDeltaEvent
 
+from open_voice_assistant.agent.assistant_context import AssistantContext
+from open_voice_assistant.agent.tools import BUILTIN_TOOLS
 from open_voice_assistant.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -23,6 +28,7 @@ class Assistant:
         self._settings = settings
         self._agent: Agent | None = None
         self._session: SQLiteSession | None = None
+        self._mcp_servers: list[MCPServerStdio] = []
 
     def _build_model(self) -> OpenAIChatCompletionsModel:
         client = AsyncOpenAI(
@@ -34,17 +40,103 @@ class Assistant:
             openai_client=client,
         )
 
+    def _parse_mcp_servers(self) -> list[MCPServerStdio]:
+        raw = self._settings.mcp_servers.strip()
+        if not raw:
+            return []
+
+        if raw.startswith("@"):
+            with open(raw[1:]) as f:
+                entries = json.load(f)
+        else:
+            entries = json.loads(raw)
+        servers = []
+        for entry in entries:
+            name = entry.get("name", entry["args"][-1] if entry.get("args") else entry["command"])
+            servers.append(MCPServerStdio(
+                name=name,
+                params={"command": entry["command"], "args": entry.get("args", [])},
+                cache_tools_list=True,
+            ))
+        return servers
+
+    def _parse_agents(self, model: OpenAIChatCompletionsModel) -> list[tuple[Agent, list[MCPServerStdio], str]]:
+        """Parse sub-agent definitions from config."""
+        raw = self._settings.agents.strip()
+        if not raw:
+            return []
+
+        if raw.startswith("@"):
+            with open(raw[1:]) as f:
+                entries = json.load(f)
+        else:
+            entries = json.loads(raw)
+
+        result = []
+        for entry in entries:
+            servers = []
+            for srv in entry.get("mcp_servers", []):
+                name = srv.get("name", srv["args"][-1] if srv.get("args") else srv["command"])
+                servers.append(MCPServerStdio(
+                    name=name,
+                    params={"command": srv["command"], "args": srv.get("args", [])},
+                    cache_tools_list=True,
+                ))
+            agent = Agent(
+                name=entry["name"],
+                instructions=entry.get("instructions", ""),
+                model=model,
+                mcp_servers=servers,
+            )
+            result.append((agent, servers, entry.get("description", "")))
+        return result
+
     def load(self) -> None:
         logger.info("Initializing agent with model: %s", self._settings.agent_model)
         if self._settings.openai_base_url:
             logger.info("  Base URL: %s", self._settings.openai_base_url)
 
-        self._agent = Agent(
+        self._mcp_servers = self._parse_mcp_servers()
+        if self._mcp_servers:
+            logger.info("  MCP servers: %s", [s.name for s in self._mcp_servers])
+
+        model = self._build_model()
+
+        sub_agent_tools = []
+        for agent, servers, description in self._parse_agents(model):
+            self._mcp_servers.extend(servers)
+            sub_agent_tools.append(agent.as_tool(
+                tool_name=agent.name,
+                tool_description=description,
+            ))
+            logger.info("  Sub-agent: %s", agent.name)
+
+        self._agent = Agent[AssistantContext](
             name="voice-assistant",
             instructions=self._settings.agent_instructions,
-            model=self._build_model(),
+            model=model,
+            tools=[*BUILTIN_TOOLS, *sub_agent_tools],
+            mcp_servers=self._mcp_servers,
         )
         logger.info("Agent initialized")
+
+    async def start(self) -> None:
+        """Start MCP server connections."""
+        for server in self._mcp_servers:
+            await server.__aenter__()
+            logger.info("MCP server started: %s", server.name)
+
+    async def stop(self) -> None:
+        """Stop MCP server connections."""
+        for server in self._mcp_servers:
+            try:
+                await asyncio.wait_for(
+                    server.__aexit__(None, None, None), timeout=3.0,
+                )
+            except (TimeoutError, asyncio.CancelledError):
+                logger.debug("MCP server %s did not stop cleanly", server.name)
+            except Exception:
+                logger.exception("Error stopping MCP server: %s", server.name)
 
     async def reset_history(self) -> None:
         """Clear conversation history. Call at the start of a new wake word session."""
@@ -53,7 +145,7 @@ class Assistant:
         self._session = SQLiteSession("voice")
         logger.debug("Conversation history reset")
 
-    async def run_streamed(self, text: str) -> AsyncIterator[str]:
+    async def run_streamed(self, text: str, context: AssistantContext | None = None) -> AsyncIterator[str]:
         """Run the agent with session history and yield content tokens."""
         if self._agent is None:
             raise RuntimeError("Call load() first")
@@ -68,6 +160,7 @@ class Assistant:
                 input=text,
                 run_config=_RUN_CONFIG,
                 session=self._session,
+                context=context,
             )
 
             async for event in result.stream_events():

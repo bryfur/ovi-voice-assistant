@@ -8,7 +8,7 @@ import sys
 
 from open_voice_assistant.config import DeviceConfig, Settings, parse_devices
 from open_voice_assistant.device_manager import DeviceManager
-from open_voice_assistant.voice_assistant_pipeline import VoiceAssistantPipeline
+from open_voice_assistant.voice_assistant import VoiceAssistant
 
 
 def main() -> None:
@@ -21,10 +21,12 @@ def main() -> None:
     parser.add_argument("--scan", action="store_true", help="Scan for ESPHome devices on the network")
     parser.add_argument("--gen-key", action="store_true", help="Generate an encryption key and exit")
     parser.add_argument("--stt-provider", default=None, help="STT provider (whisper)")
-    parser.add_argument("--tts-provider", default=None, help="TTS provider (piper)")
+    parser.add_argument("--tts-provider", default=None, help="TTS provider (piper, pocket)")
     parser.add_argument("--stt-model", default=None, help="STT model name")
     parser.add_argument("--tts-model", default=None, help="TTS model name")
     parser.add_argument("--agent-model", default=None, help="OpenAI model name")
+    parser.add_argument("--mcp-servers", default=None, help='MCP servers JSON: \'[{"command": "npx", "args": ["-y", "@dangahagan/weather-mcp"]}]\'')
+    parser.add_argument("--agents", default=None, help="Sub-agents JSON or @path/to/agents.json")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
 
@@ -33,6 +35,9 @@ def main() -> None:
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+    # Silence noisy third-party loggers even in debug mode
+    for name in ("aioesphomeapi", "httpx", "httpcore", 'openai'):
+        logging.getLogger(name).setLevel(logging.INFO)
     logger = logging.getLogger("open_voice_assistant")
 
     if args.gen_key:
@@ -82,6 +87,10 @@ def main() -> None:
         overrides["tts_model"] = args.tts_model
     if args.agent_model:
         overrides["agent_model"] = args.agent_model
+    if args.mcp_servers:
+        overrides["mcp_servers"] = args.mcp_servers
+    if args.agents:
+        overrides["agents"] = args.agents
 
     settings = Settings(**overrides)
 
@@ -106,6 +115,8 @@ def main() -> None:
     logger.info("  STT: %s (%s)", settings.stt_provider, settings.stt_model)
     logger.info("  TTS: %s (%s)", settings.tts_provider, settings.tts_model)
     logger.info("  Agent: %s", settings.agent_model)
+    if settings.mcp_servers:
+        logger.info("  MCP: %s", settings.mcp_servers)
     any_encrypted = False
     for i, d in enumerate(devices):
         logger.info("  Device %d: %s:%d", i, d.host, d.port)
@@ -119,7 +130,7 @@ def main() -> None:
         )
 
     # Load models (synchronous, done before serving)
-    pipeline = VoiceAssistantPipeline(settings)
+    pipeline = VoiceAssistant(settings)
     pipeline.load()
 
     # Run async server
@@ -149,7 +160,8 @@ async def _scan() -> None:
 
 
 async def _serve(devices: list[DeviceConfig], settings: Settings,
-                 pipeline: VoiceAssistantPipeline) -> None:
+                 pipeline: VoiceAssistant) -> None:
+    await pipeline.start()
     server = DeviceManager(devices, settings, pipeline)
     await server.start()
 
@@ -162,7 +174,14 @@ async def _serve(devices: list[DeviceConfig], settings: Settings,
 
     await stop.wait()
     logging.getLogger("open_voice_assistant").info("Shutting down...")
-    await server.stop()
+    try:
+        await asyncio.wait_for(server.stop(), timeout=5.0)
+    except TimeoutError:
+        pass
+    try:
+        await asyncio.wait_for(pipeline.stop(), timeout=5.0)
+    except TimeoutError:
+        pass
 
 
 if __name__ == "__main__":

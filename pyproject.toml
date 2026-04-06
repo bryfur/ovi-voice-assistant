@@ -17,6 +17,9 @@ dependencies = [
     "pydantic-settings==2.13.1",
 ]
 
+[project.optional-dependencies]
+pocket = ["pocket-tts==1.1.1"]
+
 [dependency-groups]
 dev = ["esphome==2026.3.2"]
 
