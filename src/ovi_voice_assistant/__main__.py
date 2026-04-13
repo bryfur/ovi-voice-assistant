@@ -23,9 +23,11 @@ def main() -> None:
     parser.add_argument(
         "--gen-key", action="store_true", help="Generate an encryption key and exit"
     )
-    parser.add_argument("--stt-provider", default=None, help="STT provider (whisper, nemotron)")
     parser.add_argument(
-        "--tts-provider", default=None, help="TTS provider (piper, pocket)"
+        "--stt-provider", default=None, help="STT provider (whisper)"
+    )
+    parser.add_argument(
+        "--tts-provider", default=None, help="TTS provider (kokoro, piper)"
     )
     parser.add_argument("--stt-model", default=None, help="STT model name")
     parser.add_argument("--tts-model", default=None, help="TTS model name")
@@ -59,7 +61,7 @@ def main() -> None:
         datefmt="%H:%M:%S",
     )
     # Silence noisy third-party loggers even in debug mode
-    for name in ("aioesphomeapi", "httpx", "httpcore", "openai", "bleak", "pocket_tts"):
+    for name in ("aioesphomeapi", "httpx", "httpcore", "openai", "bleak"):
         logging.getLogger(name).setLevel(logging.INFO)
     logger = logging.getLogger("ovi_voice_assistant")
 

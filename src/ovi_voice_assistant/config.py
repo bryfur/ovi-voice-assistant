@@ -46,7 +46,7 @@ class Settings(BaseSettings):
 
     # Provider selection
     stt_provider: str = "whisper"
-    tts_provider: str = "piper"
+    tts_provider: str = "kokoro"
 
     # STT (faster-whisper)
     stt_model: str = "base.en"
@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     stt_compute_type: str = "int8"
 
     # TTS
-    tts_model: str = "en_US-lessac-medium"
+    tts_model: str = "af_heart"
     tts_speaker_id: int | None = None
     tts_length_scale: float = 1.0
     tts_sentence_silence: float = 0.1

@@ -21,15 +21,10 @@ TTS_PROVIDERS: dict[str, type[TTS]] = {}
 
 
 def _create_stt(settings: Settings) -> STT:
-    if settings.stt_provider not in STT_PROVIDERS:
-        if settings.stt_provider == "whisper":
-            from ovi_voice_assistant.stt.whisper_stt import WhisperSTT
+    if settings.stt_provider not in STT_PROVIDERS and settings.stt_provider == "whisper":
+        from ovi_voice_assistant.stt.whisper_stt import WhisperSTT
 
-            STT_PROVIDERS["whisper"] = WhisperSTT
-        elif settings.stt_provider == "nemotron":
-            from ovi_voice_assistant.stt.nemotron_stt import NemotronSTT
-
-            STT_PROVIDERS["nemotron"] = NemotronSTT
+        STT_PROVIDERS["whisper"] = WhisperSTT
     cls = STT_PROVIDERS.get(settings.stt_provider)
     if cls is None:
         raise ValueError(f"Unknown STT provider: {settings.stt_provider}")
@@ -42,10 +37,10 @@ def _create_tts(settings: Settings, sample_rate: int = 16000) -> TTS:
             from ovi_voice_assistant.tts.piper_tts import PiperTTS
 
             TTS_PROVIDERS["piper"] = PiperTTS
-        elif settings.tts_provider == "pocket":
-            from ovi_voice_assistant.tts.pocket_tts import PocketTTS
+        elif settings.tts_provider == "kokoro":
+            from ovi_voice_assistant.tts.kokoro_tts import KokoroTTS
 
-            TTS_PROVIDERS["pocket"] = PocketTTS
+            TTS_PROVIDERS["kokoro"] = KokoroTTS
     cls = TTS_PROVIDERS.get(settings.tts_provider)
     if cls is None:
         raise ValueError(f"Unknown TTS provider: {settings.tts_provider}")

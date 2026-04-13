@@ -141,13 +141,13 @@ class TestSettingsDefaults:
         assert s.codec == "lc3"
         assert s.speaker_sample_rate == 0
         assert s.stt_provider == "whisper"
-        assert s.tts_provider == "piper"
+        assert s.tts_provider == "kokoro"
         assert s.stt_model == "base.en"
         assert s.stt_device == "cpu"
         assert s.stt_language == "en"
         assert s.stt_beam_size == 1
         assert s.stt_compute_type == "int8"
-        assert s.tts_model == "en_US-lessac-medium"
+        assert s.tts_model == "af_heart"
         assert s.tts_speaker_id is None
         assert s.tts_length_scale == 1.0
         assert s.tts_sentence_silence == 0.1

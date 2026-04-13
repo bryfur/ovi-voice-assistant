@@ -9,7 +9,6 @@ authors = [
 requires-python = ">=3.14"
 dependencies = [
     "faster-whisper==1.2.1",
-    "piper-tts==1.4.2",
     "openai-agents==0.13.4",
     "aioesphomeapi==44.6.2",
     "numpy==2.4.4",
@@ -20,13 +19,16 @@ dependencies = [
     "opuslib>=3.0.1",
     "bleak>=0.22.0",
     "fastembed>=0.6.0",
-    "pocket-tts==1.1.1",
+    "kokoro-onnx>=0.5.0",
     "onnxruntime>=1.18.0",
     "ytmusicapi>=1.8.0",
     "yt-dlp>=2025.1.0",
     "playwright>=1.49.0",
     "websockets>=14.0",
 ]
+
+[project.optional-dependencies]
+piper = ["piper-tts==1.4.2"]
 
 [dependency-groups]
 dev = ["esphome==2026.3.2", "pytest>=8.0", "pytest-asyncio>=0.25", "ruff>=0.11"]
