@@ -1,0 +1,232 @@
+"""Voice pipeline: STT → Agent → TTS with event-driven output."""
+
+import asyncio
+import logging
+from collections.abc import AsyncIterator
+
+from ovi_voice_assistant.agent.assistant import Assistant
+from ovi_voice_assistant.agent.assistant_context import AssistantContext
+from ovi_voice_assistant.config import Settings
+from ovi_voice_assistant.pipeline_output import PipelineOutput
+from ovi_voice_assistant.stt import STT
+from ovi_voice_assistant.transport import EventType
+from ovi_voice_assistant.tts import TTS
+
+logger = logging.getLogger(__name__)
+
+LISTEN_TOKEN = "[LISTEN]"
+
+STT_PROVIDERS: dict[str, type[STT]] = {}
+TTS_PROVIDERS: dict[str, type[TTS]] = {}
+
+
+def _create_stt(settings: Settings) -> STT:
+    if settings.stt_provider not in STT_PROVIDERS:
+        if settings.stt_provider == "whisper":
+            from ovi_voice_assistant.stt.whisper_stt import WhisperSTT
+
+            STT_PROVIDERS["whisper"] = WhisperSTT
+        elif settings.stt_provider == "nemotron":
+            from ovi_voice_assistant.stt.nemotron_stt import NemotronSTT
+
+            STT_PROVIDERS["nemotron"] = NemotronSTT
+    cls = STT_PROVIDERS.get(settings.stt_provider)
+    if cls is None:
+        raise ValueError(f"Unknown STT provider: {settings.stt_provider}")
+    return cls(settings)
+
+
+def _create_tts(settings: Settings, sample_rate: int = 16000) -> TTS:
+    if settings.tts_provider not in TTS_PROVIDERS:
+        if settings.tts_provider == "piper":
+            from ovi_voice_assistant.tts.piper_tts import PiperTTS
+
+            TTS_PROVIDERS["piper"] = PiperTTS
+        elif settings.tts_provider == "pocket":
+            from ovi_voice_assistant.tts.pocket_tts import PocketTTS
+
+            TTS_PROVIDERS["pocket"] = PocketTTS
+    cls = TTS_PROVIDERS.get(settings.tts_provider)
+    if cls is None:
+        raise ValueError(f"Unknown TTS provider: {settings.tts_provider}")
+    return cls(settings, sample_rate=sample_rate)
+
+
+class VoiceAssistant:
+    """Loads models and runs the full voice pipeline (STT → Agent → TTS).
+
+    Works entirely in PCM — codec encoding/decoding is handled by the caller.
+    """
+
+    def __init__(self, settings: Settings, tts_sample_rate: int = 16000) -> None:
+        self.settings = settings
+        self.stt: STT = _create_stt(settings)
+        self.tts: TTS = _create_tts(settings, sample_rate=tts_sample_rate)
+        self.agent = Assistant(settings)
+        self._lock = asyncio.Lock()
+        self._last_response = ""
+        self._bg_tasks: set[asyncio.Task] = set()
+
+    def load(self) -> None:
+        self.stt.load()
+        self.tts.load()
+        self.agent.load()
+        logger.info("Voice pipeline ready")
+
+    async def start(self) -> None:
+        await self.agent.start()
+
+    async def stop(self) -> None:
+        await self.agent.stop()
+
+    async def run(
+        self,
+        output: PipelineOutput,
+        audio_iter: AsyncIterator[bytes],
+        context: AssistantContext | None = None,
+    ) -> bool:
+        """Run the full pipeline. Returns True if follow-up requested."""
+        try:
+            transcript = await self._run_stt(output, audio_iter)
+            if not transcript:
+                return False
+
+            if context:
+                context.say = self._make_say_callback(output, context)
+
+            agent_tokens = self.agent.run_streamed(transcript, context=context)
+            needs_followup = await self._stream_tts(output, agent_tokens, context)
+
+            if needs_followup:
+                await output.send_event(EventType.CONTINUE)
+
+            # Auto-retain: fire-and-forget memory extraction
+            if context and context.memory:
+                exchange = f"User: {transcript}\nAssistant: {self._last_response}"
+                task = asyncio.create_task(
+                    self._retain_memory(context.memory, exchange),
+                    name="memory-retain",
+                )
+                self._bg_tasks.add(task)
+                task.add_done_callback(self._bg_tasks.discard)
+
+            logger.info("Pipeline complete (follow_up=%s)", needs_followup)
+            return needs_followup
+
+        except asyncio.CancelledError:
+            logger.debug("Pipeline cancelled")
+            return False
+        except Exception:
+            logger.exception("Pipeline error")
+            try:
+                await output.send_event(
+                    EventType.ERROR, b"pipeline_error\0Pipeline processing failed"
+                )
+            except Exception:
+                pass
+            return False
+
+    async def announce(self, output: PipelineOutput, text: str) -> None:
+        """Play a TTS announcement."""
+        try:
+            await output.send_event(EventType.TTS_START)
+
+            async def text_tokens():
+                yield text
+
+            async for pcm_chunk in self.tts.synthesize_stream(text_tokens()):
+                await output.send_audio(pcm_chunk)
+
+            await output.send_event(EventType.TTS_END)
+            logger.info("Announcement: %r", text[:60])
+        except asyncio.CancelledError:
+            logger.debug("Announcement cancelled")
+        except Exception:
+            logger.exception("Announcement error")
+
+    def _make_say_callback(self, output: PipelineOutput, context: AssistantContext):
+        """Create a fire-and-forget callback that speaks text inline.
+
+        The say audio runs as a background task so the agent can continue
+        calling tools while it plays.  ``drain_say()`` on the context
+        ensures it finishes before the response TTS starts.
+        """
+
+        async def _speak(text: str) -> None:
+            async def tokens():
+                yield text
+
+            async for pcm_chunk in self.tts.synthesize_stream(tokens()):
+                await output.send_audio(pcm_chunk)
+
+        async def _say(text: str) -> None:
+            # Wait for any previous say to finish (no overlap)
+            await context.drain_say()
+            context._pending_say = asyncio.create_task(_speak(text))
+
+        return _say
+
+    # -- Internal --
+
+    async def _run_stt(
+        self, output: PipelineOutput, audio_iter: AsyncIterator[bytes]
+    ) -> str | None:
+        async def on_vad_start():
+            await output.send_event(EventType.VAD_START)
+
+        async with self._lock:
+            transcript = await self.stt.transcribe_stream(
+                audio_iter, on_vad_start=on_vad_start
+            )
+
+        await output.send_event(EventType.MIC_STOP)
+
+        if not transcript:
+            logger.info("No speech detected")
+            await output.send_event(EventType.ERROR, b"stt-no-text\0No speech detected")
+            return None
+
+        logger.debug("User said: %r", transcript)
+        return transcript
+
+    async def _stream_tts(
+        self,
+        output: PipelineOutput,
+        agent_tokens: AsyncIterator[str],
+        context: AssistantContext | None = None,
+    ) -> bool:
+        follow_up = False
+        full_text = ""
+
+        async def filtered_tokens():
+            nonlocal follow_up, full_text
+            async for token in agent_tokens:
+                full_text += token
+                yield token
+            if LISTEN_TOKEN in full_text:
+                follow_up = True
+
+        await output.send_event(EventType.TTS_START)
+
+        drained = False
+        async for pcm_chunk in self.tts.synthesize_stream(filtered_tokens()):
+            if not drained and context:
+                await context.drain_say()
+                drained = True
+            await output.send_audio(pcm_chunk)
+
+        # Drain even if agent produced no response audio
+        if not drained and context:
+            await context.drain_say()
+
+        await output.send_event(EventType.TTS_END)
+        self._last_response = full_text
+        return follow_up
+
+    @staticmethod
+    async def _retain_memory(memory, exchange: str) -> None:
+        """Background task to extract and store facts from a conversation turn."""
+        try:
+            await memory.retain(exchange, context="voice conversation")
+        except Exception:
+            logger.exception("Background memory retain failed")

@@ -15,3 +15,5 @@ esphome/secrets.yaml
 /secrets.yaml
 
 .esphome
+.env
+test_

@@ -1,6 +1,6 @@
-# OVA BLE Voice Assistant Server Specification
+# Ovi BLE Voice Assistant Server Specification
 
-This document specifies the BLE GATT protocol used between an OVA ESPHome device (GATT server/peripheral) and an OVA voice assistant server (GATT client/central). It contains everything needed to implement a compatible server in any language.
+This document specifies the BLE GATT protocol used between an Ovi ESPHome device (GATT server/peripheral) and an Ovi voice assistant server (GATT client/central). It contains everything needed to implement a compatible server in any language.
 
 ---
 

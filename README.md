@@ -1,32 +1,45 @@
-# Open Voice Assistant
+# Ovi — Open Voice Assistant
 
-A standalone AI voice assistant for the [Home Assistant Voice Preview Edition](https://www.home-assistant.io/voice-pe/) (Voice PE). Runs entirely on your local network with no Home Assistant dependency.
+A standalone AI voice assistant that connects directly to ESPHome devices over WiFi or BLE. No Home Assistant required.
 
-The server connects directly to the Voice PE over the ESPHome native API, handling the full voice pipeline: wake word detection (on-device), speech-to-text, AI agent, and text-to-speech, with audio streamed back to the device speaker.
+Handles the full voice pipeline: wake word detection (on-device) → speech-to-text → AI agent → text-to-speech, with audio streamed back to the device speaker.
 
 ## How it works
 
 ```
-Voice PE (wake word) --> mic audio over ESPHome API --> Server
-                                                         |
-                                                   faster-whisper (STT)
-                                                         |
-                                                   OpenAI Agents SDK (LLM)
-                                                         |
-                                                   TTS (Piper / pocket-tts)
-                                                         |
-Voice PE (speaker)   <-- audio over ESPHome API  <-------+
+ESPHome Device (wake word) ──► mic audio over WiFi/BLE ──► Ovi Server
+                                                              │
+                                                        STT (faster-whisper / Nemotron)
+                                                              │
+                                                        Agent (OpenAI Agents SDK)
+                                                              │
+                                                        TTS (Piper / pocket-tts)
+                                                              │
+ESPHome Device (speaker)   ◄── encoded audio ◄───────────────┘
 ```
 
-- **STT**: [faster-whisper](https://github.com/SYSTRAN/faster-whisper) with Silero VAD for end-of-speech detection. Runs on CPU.
-- **Agent**: [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) with any OpenAI-compatible endpoint (OpenAI, ollama, vLLM, LM Studio, etc.)
-- **TTS**: [Piper](https://github.com/rhasspy/piper) ONNX voices (default) or [pocket-tts](https://github.com/kyutai-labs/pocket-tts) (Kyutai). Runs on CPU.
-- **Device**: Connects via [aioesphomeapi](https://github.com/esphome/aioesphomeapi). Supports multiple devices, auto-reconnect, and encrypted connections.
+- **STT**: [faster-whisper](https://github.com/SYSTRAN/faster-whisper) with Silero VAD, or [Nemotron](https://build.nvidia.com/nvidia/nemotron-speech-streaming-en) (ONNX streaming). CPU inference.
+- **Agent**: [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) — works with any OpenAI-compatible endpoint (OpenAI, ollama, vLLM, LM Studio, etc.). Supports MCP tools, sub-agents, and session memory.
+- **TTS**: [Piper](https://github.com/rhasspy/piper) ONNX voices (default) or [pocket-tts](https://github.com/kyutai-labs/pocket-tts) (Kyutai). CPU inference.
+- **Transport**: WiFi (plain TCP) or BLE (GATT). Audio codecs: PCM, LC3, Opus.
+- **Music**: YouTube Music, Spotify, Apple Music via browser automation. Multi-room synchronized playback.
+- **Memory**: Persistent fact extraction and recall (SQLite + embeddings).
+- **Automations**: Cron-based proactive announcements.
+
+## Supported devices
+
+| Device | Transport | Codec | Notes |
+|--------|-----------|-------|-------|
+| [Voice Preview Edition](https://www.home-assistant.io/voice-pe/) | WiFi, BLE | LC3 | 12-LED ring, rotary volume, mute switch |
+| [M5Stack ATOM Echo](https://shop.m5stack.com/products/atom-echo-smart-speaker-dev-kit) | WiFi | PCM | Shared audio bus, single LED |
+| [ESP32-S3-BOX-3](https://www.espressif.com/en/dev-board/esp32-s3-box-3) | WiFi | LC3 | Dual mics, ES8311 DAC |
+| [Elecrow CrowPanel 9"](https://www.elecrow.com/crowpanel-advance-9-0-hmi-esp32-p4-ai-display.html) | WiFi | LC3 | ESP32-P4 + C6, touchscreen |
+| [Elecrow CrowPanel Advance 5"](https://www.elecrow.com/crowpanel-advance-5-0-hmi-esp32-s3-ai-display.html) | WiFi | LC3 | ESP32-S3, touchscreen |
 
 ## Requirements
 
 - Python 3.14+, [uv](https://docs.astral.sh/uv/)
-- A Home Assistant Voice Preview Edition device
+- An ESPHome-compatible device (see above)
 - An OpenAI-compatible LLM endpoint
 
 ## Quick start
@@ -37,9 +50,7 @@ Voice PE (speaker)   <-- audio over ESPHome API  <-------+
 uv sync --group dev
 ```
 
-This installs the project and all dependencies (including ESPHome for flashing).
-
-### 2. Flash the Voice PE
+### 2. Flash a device
 
 Edit `esphome/secrets.yaml` with your WiFi credentials:
 
@@ -51,65 +62,74 @@ wifi_password: "YourPassword"
 Flash the device:
 
 ```bash
-esphome run esphome/voice-pe.yaml
+uv run esphome run esphome/voice-pe.yaml
 ```
 
-### 3. Configure the server
+### 3. Configure
 
-Edit `.env` and uncomment/set your LLM endpoint and device:
+Edit `.env`:
 
 ```bash
-OVA_DEVICES=voice-pe-XXXX.local
-OVA_OPENAI_BASE_URL=http://localhost:11434/v1   # ollama example
-OVA_AGENT_MODEL=llama3.2
+OVI_DEVICES=voice-pe-XXXX.local
+OVI_OPENAI_BASE_URL=http://localhost:11434/v1   # ollama example
+OVI_AGENT_MODEL=llama3.2
 ```
 
 ### 4. Run
 
 ```bash
-ova
+ovi
 ```
 
 Or pass devices on the command line:
 
 ```bash
-ova voice-pe-XXXX.local
+ovi voice-pe-XXXX.local
 ```
 
-You can also discover devices on the network:
+Discover devices on the network:
 
 ```bash
-ova --scan
+ovi --scan
+```
+
+BLE mode (single device):
+
+```bash
+ovi --transport ble
 ```
 
 ## Configuration
 
-All settings can be configured via environment variables (prefix `OVA_`) or the `.env` file.
+All settings use the `OVI_` environment variable prefix or the `.env` file.
 
 | Variable | Default | Description |
 |---|---|---|
-| `OVA_DEVICES` | | Comma-separated devices: `host[:port[:key]]` |
-| `OVA_OPENAI_BASE_URL` | `https://api.openai.com/v1` | LLM endpoint |
-| `OVA_OPENAI_API_KEY` | | API key for the LLM endpoint |
-| `OVA_AGENT_MODEL` | `gpt-4o-mini` | Model name |
-| `OVA_STT_MODEL` | `base.en` | Whisper: `tiny.en`, `base.en`, `small.en`, `medium.en` |
-| `OVA_TTS_MODEL` | `en_US-lessac-medium` | Piper voice name / pocket-tts voice prompt |
-| `OVA_STT_PROVIDER` | `whisper` | STT provider |
-| `OVA_TTS_PROVIDER` | `piper` | TTS provider (`piper`, `pocket`) |
+| `OVI_DEVICES` | | Comma-separated devices: `host[:port[:key]]` |
+| `OVI_OPENAI_BASE_URL` | | LLM endpoint |
+| `OVI_OPENAI_API_KEY` | | API key for the LLM endpoint |
+| `OVI_AGENT_MODEL` | `gpt-4o-mini` | Model name |
+| `OVI_STT_MODEL` | `base.en` | Whisper model |
+| `OVI_STT_PROVIDER` | `whisper` | STT provider (`whisper`, `nemotron`) |
+| `OVI_TTS_MODEL` | `en_US-lessac-medium` | Piper voice / pocket-tts voice |
+| `OVI_TTS_PROVIDER` | `piper` | TTS provider (`piper`, `pocket`) |
+| `OVI_TRANSPORT` | `wifi` | Transport (`wifi`, `ble`) |
+| `OVI_CODEC` | `lc3` | Audio codec (`pcm`, `lc3`, `opus`) |
+| `OVI_MCP_SERVERS` | | MCP tool servers JSON or `@path/to/file.json` |
+| `OVI_AGENTS` | | Sub-agents JSON or `@path/to/agents.json` |
+| `OVI_MEMORY_ENABLED` | `true` | Enable persistent memory |
 
-CLI arguments override `.env` values. Run `ova --help` for all options.
-
-> **Note**: All commands assume you've run `uv sync --group dev` first. If you prefer not to install, you can use `uv run ova` instead.
+CLI arguments override `.env` values. Run `ovi --help` for all options.
 
 ## Encryption
 
-Generate an encryption key and add it to your ESPHome secrets:
+Generate an encryption key:
 
 ```bash
-ova --gen-key
+ovi --gen-key
 ```
 
-This writes the key to `esphome/secrets.yaml`. Uncomment the encryption block in `esphome/voice-pe.yaml`:
+This writes the key to `esphome/secrets.yaml`. Uncomment the encryption block in the device YAML:
 
 ```yaml
 api:
@@ -117,44 +137,66 @@ api:
     key: !secret api_encryption_key
 ```
 
-Reflash the device, then include the key in your device config:
+Reflash and connect:
 
+```bash
+ovi voice-pe-XXXX.local::KEY
 ```
-ova voice-pe-XXXX.local::KEY
 
-or
+## Agent tools
 
-OVA_DEVICES=voice-pe-XXXX.local::KEY
-ova
-```
+The voice assistant includes 19 built-in tools:
+
+- **Speech**: `say` (immediate speech)
+- **Timers**: `set_timer`, `check_timer`, `cancel_timer`
+- **Time**: `get_current_time`
+- **Math**: `calculate`, `unit_convert`
+- **Random**: `roll_dice`, `random_number`, `flip_coin`
+- **Music**: `play_music`, `pause_music`, `resume_music`, `skip_track`, `stop_music`, `now_playing`
+- **Automations**: `create_automation`, `list_automations`, `delete_automation`, `toggle_automation`
+
+Additional tools via MCP servers and sub-agents.
 
 ## Device features
 
-The included ESPHome configuration provides:
+The ESPHome firmware provides:
 
-- On-device wake word detection (Okay Nabu, Hey Jarvis, Hey Mycroft)
+- On-device wake word detection (microWakeWord)
 - "Stop" wake word to interrupt responses
-- 12-LED RGB ring with animated state feedback (listening, thinking, replying, error, muted)
-- Rotary dial volume control with LED arc display
+- LED state feedback (listening, thinking, replying, error, muted)
+- Volume control (rotary encoder or software)
 - Hardware mute switch
-- Center button (single press: trigger/stop, double press: toggle mute)
-- Speaker with mixer (voice + media player for wake sounds)
-- Conversation follow-up (agent can request the mic to reactivate)
+- Conversation follow-up (`[LISTEN]` token)
+- Multi-device wake word arbitration (closest device wins)
+- Synchronized multi-room music playback (NTP-based)
 
 ## Project structure
 
 ```
-src/open_voice_assistant/
-    __main__.py              CLI entry point
-    config.py                Settings (env/CLI)
-    device.py                ESPHome device connection
-    device_manager.py        Multi-device management
-    voice_assistant.py           STT -> Agent -> TTS orchestration
+src/ovi_voice_assistant/
+    __main__.py              CLI entry point (ovi command)
+    config.py                Settings (OVI_ env prefix)
+    voice_assistant.py       STT → Agent → TTS pipeline
+    device_connection.py     Device transport bridge + codec
+    device_manager.py        Multi-device management + wake arbitration
     discovery.py             mDNS device discovery
-    agent/assistant.py       OpenAI Agents SDK wrapper
-    stt/                     STT interface + faster-whisper
-    tts/                     TTS interface + Piper / pocket-tts
+    scheduler.py             Cron automations
+    pipeline_output.py       Pipeline event types
+    codec/                   PCM, LC3, Opus encoding/decoding
+    transport/               WiFi (TCP) and BLE (GATT) transports
+    stt/                     Whisper + Nemotron speech-to-text
+    tts/                     Piper + Pocket text-to-speech
+    agent/                   OpenAI Agents SDK + MCP tools
+    memory/                  SQLite fact store + embeddings
+    music/                   YouTube, Spotify, Apple Music
 esphome/
-    voice-pe.yaml            ESPHome firmware for Voice PE
-    secrets.yaml             WiFi + encryption credentials (gitignored)
+    components/              Custom ESPHome components
+        ovi_voice_assistant/ Device-side voice pipeline
+        ovi_audio_codec/     LC3/Opus codec for ESP32
+    voice-pe.yaml            Voice PE (WiFi)
+    voice-pe-ble.yaml        Voice PE (BLE)
+    atom-echo.yaml           ATOM Echo
+    s3-box-3.yaml            S3-BOX-3
+    crowpanel-9.yaml         CrowPanel 9" (ESP32-P4)
+    crowpanel-s3-5.yaml      CrowPanel Advance 5" (ESP32-S3)
 ```

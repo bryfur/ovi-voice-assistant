@@ -1,0 +1,424 @@
+# Ovi — Open Voice Assistant — ESPHome config for Elecrow CrowPanel Advanced 9" ESP32-P4
+#
+# The CrowPanel 9" has an ESP32-P4 (RISC-V dual-core @ 400 MHz) with 16 MB
+# flash and 32 MB PSRAM, a 1024x600 IPS touchscreen, PDM microphone, and
+# NS4168 I2S speaker amplifier driving dual speakers.  WiFi is provided by
+# an ESP32-C6 companion chip over SDIO (esp32_hosted).
+#
+# Hardware:
+#   - PDM microphone:     CLK=GPIO24, DATA=GPIO26
+#   - NS4168 speaker amp: LRCLK=GPIO21, BCLK=GPIO22, DOUT=GPIO23, EN=GPIO30
+#   - ESP32-C6 WiFi:      SDIO (CLK=GPIO18, CMD=GPIO19, D0-D3=GPIO14-17)
+#   - I2C (touch/sensor): SDA=GPIO45, SCL=GPIO46
+#   - LCD backlight:      PWM=GPIO31, power=GPIO29
+#   - LED:                GPIO48
+#
+# Note: ESP32-P4 PDM mic support is pulled via external_components from
+#   ESPHome PR #15333.  Remove that entry once the PR is merged upstream.
+#
+# Usage:
+#   1. Install ESPHome: pip install esphome   (or `uv sync --group dev`)
+#   2. Create esphome/secrets.yaml with wifi_ssid, wifi_password, api_encryption_key
+#   3. Flash over USB: esphome run esphome/crowpanel-9.yaml
+#   4. Start the server: ovi crowpanel-9-XXXX.local
+
+substitutions:
+  wifi_ssid: !secret wifi_ssid
+  wifi_password: !secret wifi_password
+
+  voice_assist_idle_phase_id: "1"
+  voice_assist_waiting_for_command_phase_id: "2"
+  voice_assist_listening_for_command_phase_id: "3"
+  voice_assist_thinking_phase_id: "4"
+  voice_assist_replying_phase_id: "5"
+  voice_assist_not_ready_phase_id: "10"
+  voice_assist_error_phase_id: "11"
+  wake_word_triggered_sound_file: "https://github.com/esphome/home-assistant-voice-pe/raw/dev/sounds/wake_word_triggered.flac"
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components:
+      - ovi_voice_assistant
+      - ovi_audio_codec
+  # ESP32-P4 PDM mic support — remove once ESPHome merges PR #15333
+  - source: github://pr#15333
+    components: [i2s_audio]
+    refresh: 1h
+
+esphome:
+  name: crowpanel
+  friendly_name: CrowPanel Voice
+  name_add_mac_suffix: true
+  min_version: "2025.3.0"
+  on_boot:
+    priority: 600
+    then:
+        - switch.turn_on: speaker_amp
+        - output.turn_on: backlight_pwm
+        - light.turn_on:
+            id: back_light
+            brightness: 80%
+        - number.set:
+            id: speaker_volume
+            value: 60
+        - delay: 10s
+        - script.execute: update_c6
+
+esp32:
+  variant: esp32p4
+  engineering_sample: true  # Board ships with ECO2 (rev2) silicon, not rev3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    version: recommended
+    advanced:
+      execute_from_psram: true
+      enable_idf_experimental_features: true
+
+psram:
+  speed: 200MHz
+
+esp_ldo:
+  - channel: 3
+    voltage: 2.5V
+  - channel: 4
+    voltage: 2.5V
+
+logger:
+  level: DEBUG
+  hardware_uart: UART0
+
+api:
+  id: api_id
+  reboot_timeout: 0s
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+
+# --- WiFi via ESP32-C6 companion chip (SDIO) ---
+
+esp32_hosted:
+  variant: esp32c6
+  active_high: true
+  reset_pin: GPIO32
+  cmd_pin: GPIO19
+  clk_pin: GPIO18
+  d0_pin: GPIO14
+  d1_pin: GPIO15
+  d2_pin: GPIO16
+  d3_pin: GPIO17
+  sdio_frequency: 5MHz
+
+
+http_request:
+
+update:
+  - platform: esp32_hosted
+    id: c6_firmware
+    name: "C6 Firmware"
+    type: http
+    source: https://esphome.github.io/esp-hosted-firmware/manifest/esp32c6.json
+    update_interval: 6h
+
+wifi:
+  ssid: "${wifi_ssid}"
+  password: "${wifi_password}"
+  power_save_mode: none
+
+# --- Audio hardware ---
+# Separate I2S peripherals for mic (PDM) and speaker — full duplex.
+
+i2s_audio:
+  - id: i2s_speaker
+    i2s_lrclk_pin: GPIO21
+    i2s_bclk_pin: GPIO22
+  - id: i2s_mic
+    i2s_lrclk_pin: GPIO24  # PDM clock output to microphone
+    i2s_bclk_pin: GPIO25   # Not used by PDM; set to unused pin to avoid uninitialized GPIO
+
+microphone:
+  - platform: i2s_audio
+    id: panel_mic
+    i2s_din_pin: GPIO26
+    adc_type: external
+    pdm: true
+    sample_rate: 16000
+    correct_dc_offset: true
+    i2s_audio_id: i2s_mic
+
+speaker:
+  # Physical I2S speaker (NS4168 — dual speakers, stereo)
+  - platform: i2s_audio
+    id: i2s_audio_speaker
+    i2s_dout_pin: GPIO23
+    dac_type: external
+    sample_rate: 48000
+    bits_per_sample: 16bit
+    channel: stereo
+    i2s_audio_id: i2s_speaker
+    timeout: 2000ms
+    buffer_duration: 100ms
+
+  # Mixer combines voice assistant + media player audio
+  - platform: mixer
+    id: audio_mixer
+    output_speaker: i2s_audio_speaker
+    source_speakers:
+      - id: voice_mixing_input
+      - id: media_mixing_input
+
+  # Voice assistant audio path (API streamed TTS)
+  - platform: resampler
+    id: voice_resampler
+    output_speaker: voice_mixing_input
+    sample_rate: 48000
+    bits_per_sample: 16
+
+  # Media player audio path (wake sounds, notifications)
+  - platform: resampler
+    id: media_resampler
+    output_speaker: media_mixing_input
+    sample_rate: 48000
+    bits_per_sample: 16
+
+# --- Wake sound ---
+
+audio_file:
+  - id: wake_word_triggered_sound
+    file: ${wake_word_triggered_sound_file}
+
+media_source:
+  - platform: audio_file
+    id: audio_file_source
+
+media_player:
+  - platform: speaker_source
+    id: sound_player
+    name: "Speaker"
+    announcement_pipeline:
+      speaker: media_resampler
+      sources:
+        - audio_file_source
+
+# --- Speaker amplifier & mute ---
+
+switch:
+  - platform: gpio
+    id: speaker_amp
+    pin:
+      number: GPIO30
+      inverted: true  # NS4168 amp enable is active LOW
+    restore_mode: ALWAYS_ON
+    internal: true
+
+  - platform: template
+    id: mute_switch
+    name: Mute
+    icon: "mdi:microphone-off"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - microphone.mute:
+    turn_off_action:
+      - microphone.unmute:
+
+  - platform: template
+    id: wake_sound
+    name: Wake sound
+    icon: "mdi:bullhorn"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+  # Status LED
+  - platform: gpio
+    id: status_led
+    pin: GPIO48
+    restore_mode: ALWAYS_OFF
+    internal: true
+
+button:
+  - platform: template
+    id: announce_trigger
+    name: "Announce"
+    entity_category: diagnostic
+    on_press:
+      - lambda: id(voice_asst).request_start("");
+
+# --- Backlight ---
+
+output:
+  - platform: ledc
+    pin: GPIO31
+    id: backlight_pwm
+  - platform: gpio
+    id: power_light
+    pin: GPIO29
+    inverted: true
+
+light:
+  - platform: monochromatic
+    name: "Backlight"
+    output: backlight_pwm
+    id: back_light
+    restore_mode: ALWAYS_ON
+    internal: true
+
+# --- Volume control ---
+# NS4168 has no I2C volume register — volume is software-controlled via the
+# mixer/resampler pipeline.
+
+number:
+  - platform: template
+    id: speaker_volume
+    name: "Speaker Volume"
+    min_value: 0
+    max_value: 100
+    step: 5
+    initial_value: 60
+    restore_value: true
+    optimistic: true
+    unit_of_measurement: "%"
+
+# --- Wake Word ---
+
+micro_wake_word:
+  id: mww
+  microphone: panel_mic
+  stop_after_detection: false
+  models:
+    - model:
+        type: local
+        path: custom_wake_word/hey_ovi.json
+      id: hey_ovi
+    - model: "https://github.com/kahrendt/microWakeWord/releases/download/stop/stop.json"
+      id: stop
+      internal: true
+  on_wake_word_detected:
+    - if:
+        condition:
+          switch.is_off: mute_switch
+        then:
+          - if:
+              condition:
+                lambda: return wake_word == "stop";
+              then:
+                - lambda: id(voice_asst).request_stop();
+              else:
+                - logger.log:
+                    format: "Wake word detected: %s"
+                    args: ['wake_word.c_str()']
+                - if:
+                    condition:
+                      lambda: return id(voice_asst).is_running();
+                    then:
+                      - lambda: id(voice_asst).request_stop();
+                      - delay: 100ms
+                - if:
+                    condition:
+                      switch.is_on: wake_sound
+                    then:
+                      - script.execute: play_wake_sound
+                      - delay: 300ms
+                - lambda: id(voice_asst).request_start(wake_word);
+
+# --- Voice Assistant ---
+
+globals:
+  - id: voice_assistant_phase
+    type: int
+    restore_value: no
+    initial_value: ${voice_assist_not_ready_phase_id}
+
+time:
+  - platform: sntp
+    id: sntp_time
+    servers:
+      - 0.pool.ntp.org
+      - 1.pool.ntp.org
+
+ovi_voice_assistant:
+  id: voice_asst
+  transport: wifi
+  codec: lc3
+  time_id: sntp_time
+  microphone:
+    microphone: panel_mic
+    channels: 0
+    gain_factor: 4
+  speaker: voice_resampler
+  micro_wake_word: mww
+  shared_audio_bus: false
+  speaker_buffer_size: 65536
+
+  on_client_connected:
+    - logger.log: "Server connected"
+    - micro_wake_word.start:
+    - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
+
+  on_client_disconnected:
+    - logger.log: "Server disconnected"
+    - lambda: id(voice_asst).request_stop();
+    - micro_wake_word.stop:
+    - lambda: id(voice_assistant_phase) = ${voice_assist_not_ready_phase_id};
+
+  on_listening:
+    - lambda: id(voice_assistant_phase) = ${voice_assist_waiting_for_command_phase_id};
+
+  on_stt_vad_start:
+    - lambda: id(voice_assistant_phase) = ${voice_assist_listening_for_command_phase_id};
+
+  on_stt_vad_end:
+    - lambda: id(voice_assistant_phase) = ${voice_assist_thinking_phase_id};
+
+  on_stt_end:
+    - logger.log:
+        format: "Heard: %s"
+        args: ['x.c_str()']
+
+  on_tts_start:
+    - lambda: id(voice_assistant_phase) = ${voice_assist_replying_phase_id};
+
+  on_tts_stream_start:
+    - logger.log: "Speaking..."
+
+  on_end:
+    - if:
+        condition:
+          lambda: return id(voice_assistant_phase) == ${voice_assist_error_phase_id};
+        then:
+          - delay: 1s
+    - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
+
+  on_error:
+    - if:
+        condition:
+          lambda: return code != "stt-no-text-recognized";
+        then:
+          - logger.log:
+              format: "Voice error: %s — %s"
+              args: ['code.c_str()', 'message.c_str()']
+          - lambda: id(voice_assistant_phase) = ${voice_assist_error_phase_id};
+
+# --- Scripts ---
+
+script:
+  - id: update_c6
+    then:
+      - if:
+          condition:
+            lambda: return id(c6_firmware).state == update::UPDATE_STATE_AVAILABLE;
+          then:
+            - logger.log: "Updating C6 firmware..."
+            - update.perform: c6_firmware
+
+  - id: play_wake_sound
+    then:
+      - media_player.play_media:
+          id: sound_player
+          media_url: "audio-file://wake_word_triggered_sound"
+          announcement: true
+

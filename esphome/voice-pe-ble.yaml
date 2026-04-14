@@ -1,22 +1,16 @@
-# Ovi — Open Voice Assistant — ESPHome config for Home Assistant Voice Preview Edition
+# Ovi — Open Voice Assistant — BLE firmware for Home Assistant Voice Preview Edition
 #
-# Flash this to your Voice PE to connect it to the Ovi — Open Voice Assistant server.
-# No Home Assistant required.
+# This variant uses Bluetooth Low Energy instead of WiFi.
+# No WiFi network required — connects directly to a nearby server via BLE.
 #
 # Usage:
-#   1. Install ESPHome: pip install esphome
-#   2. Create esphome/secrets.yaml with wifi_ssid and wifi_password
-#   3. Flash: esphome run esphome/voice-pe.yaml
-#   4. Start the server: ovi <device-ip>
+#   1. Flash: esphome run esphome/voice-pe-ble.yaml
+#   2. Start the server: ovi --ble
+#
+# NOTE: This is experimental. WiFi version (voice-pe.yaml) is recommended
+# for production use.
 
 substitutions:
-  wifi_ssid: !secret "wifi_ssid"
-  wifi_password: !secret wifi_password
-  # Optional: set an encryption key for secure API communication.
-  # Generate: python -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
-  # Pass the same key to `ovi` CLI as the encryption_key parameter.
-
-  # Voice assistant phase IDs (matches official firmware)
   voice_assist_idle_phase_id: "1"
   voice_assist_waiting_for_command_phase_id: "2"
   voice_assist_listening_for_command_phase_id: "3"
@@ -26,8 +20,14 @@ substitutions:
   voice_assist_error_phase_id: "11"
   wake_word_triggered_sound_file: "https://github.com/esphome/home-assistant-voice-pe/raw/dev/sounds/wake_word_triggered.flac"
 
-# voice_kit component lives in the voice-pe repo
+# Ovi voice assistant + voice_kit from voice-pe repo
 external_components:
+  - source:
+      type: local
+      path: components
+    components:
+      - ovi_voice_assistant
+      - ovi_audio_codec
   - source:
       type: git
       url: https://github.com/esphome/home-assistant-voice-pe
@@ -35,16 +35,10 @@ external_components:
     components:
       - voice_kit
     refresh: 0s
-  - source:
-      type: local
-      path: components
-    components:
-      - ovi_voice_assistant
-      - ovi_audio_codec
 
 esphome:
-  name: voice-pe
-  friendly_name: Voice Assistant
+  name: voice-pe-ble
+  friendly_name: Voice Assistant BLE
   name_add_mac_suffix: true
   min_version: "2025.3.0"
   on_boot:
@@ -56,6 +50,7 @@ esphome:
       - number.set:
           id: speaker_volume
           value: 60
+      - micro_wake_word.start:
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -82,24 +77,10 @@ psram:
 logger:
   level: DEBUG
 
-api:
-  id: api_id
-  reboot_timeout: 0s
-  # To enable encryption, uncomment and set the key:
-  encryption:
-    key: !secret api_encryption_key
+# No wifi, no api, no ota (BLE only)
 
-ota:
-  - platform: esphome
-
-wifi:
-  ssid: "${wifi_ssid}"
-  password: "${wifi_password}"
-  power_save_mode: none
-  on_connect:
-    - script.execute: control_leds
-  on_disconnect:
-    - script.execute: control_leds
+esp32_ble_server:
+  id: ble_server
 
 # --- Hardware ---
 
@@ -135,7 +116,6 @@ microphone:
     channel: stereo
 
 speaker:
-  # Physical I2S speaker (DAC)
   - platform: i2s_audio
     id: i2s_audio_speaker
     sample_rate: 48000
@@ -145,11 +125,10 @@ speaker:
     i2s_audio_id: i2s_output
     dac_type: external
     channel: stereo
-    timeout: 2000ms
+    timeout: 500ms
     buffer_duration: 100ms
     audio_dac: aic3204_dac
 
-  # Mixer combines voice assistant + media player audio
   - platform: mixer
     id: audio_mixer
     output_speaker: i2s_audio_speaker
@@ -157,14 +136,12 @@ speaker:
       - id: voice_mixing_input
       - id: media_mixing_input
 
-  # Voice assistant audio path (API streamed TTS)
   - platform: resampler
     id: voice_resampler
     output_speaker: voice_mixing_input
     sample_rate: 48000
     bits_per_sample: 16
 
-  # Media player audio path (wake sounds, notifications)
   - platform: resampler
     id: media_resampler
     output_speaker: media_mixing_input
@@ -198,7 +175,6 @@ binary_sensor:
       number: GPIO0
       inverted: true
     on_multi_click:
-      # Single press — trigger voice assistant
       - timing:
           - ON for at most 0.5s
           - OFF for at least 0.3s
@@ -210,7 +186,6 @@ binary_sensor:
                 - lambda: id(voice_asst).request_stop();
               else:
                 - lambda: id(voice_asst).request_start("");
-      # Double press — toggle mute
       - timing:
           - ON for at most 0.5s
           - OFF for at most 0.3s
@@ -374,39 +349,27 @@ micro_wake_word:
                       - delay: 300ms
                 - lambda: id(voice_asst).request_start(wake_word);
 
-# --- NTP Time Sync (for multi-device music sync) ---
-
-time:
-  - platform: sntp
-    id: sntp_time
-    servers:
-      - 0.pool.ntp.org
-      - 1.pool.ntp.org
-
-# --- Voice Assistant ---
+# --- Ovi Voice Assistant (BLE) ---
 
 ovi_voice_assistant:
   id: voice_asst
-  transport: wifi
+  transport: ble
   codec: lc3
-  time_id: sntp_time
+  ble_server: ble_server
   microphone:
     microphone: i2s_mics
     channels: 0
   speaker: voice_resampler
-  micro_wake_word: mww
-  speaker_buffer_size: 65536
+  speaker_buffer_size: 16648
 
   on_client_connected:
-    - logger.log: "Server connected"
-    - micro_wake_word.start:
+    - logger.log: "BLE client connected"
     - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
     - script.execute: control_leds
 
   on_client_disconnected:
-    - logger.log: "Server disconnected"
+    - logger.log: "BLE client disconnected"
     - lambda: id(voice_asst).request_stop();
-    - micro_wake_word.stop:
     - lambda: id(voice_assistant_phase) = ${voice_assist_not_ready_phase_id};
     - script.execute: control_leds
 
@@ -454,7 +417,7 @@ ovi_voice_assistant:
           - lambda: id(voice_assistant_phase) = ${voice_assist_error_phase_id};
           - script.execute: control_leds
 
-# --- LED Ring (matches official firmware) ---
+# --- LED Ring (identical to WiFi version) ---
 
 globals:
   - id: global_led_animation_index
@@ -475,7 +438,6 @@ power_supply:
     pin: GPIO45
 
 light:
-  # Raw hardware LED strip
   - platform: esp32_rmt_led_strip
     id: leds_internal
     pin: GPIO21
@@ -487,7 +449,6 @@ light:
     default_transition_length: 0ms
     power_supply: led_power
 
-  # User-facing LED ring (color control)
   - platform: partition
     id: led_ring
     name: "LED Ring"
@@ -497,7 +458,6 @@ light:
         from: 0
         to: 11
 
-  # Voice assistant LED ring (remapped to match physical layout)
   - platform: partition
     id: voice_assistant_leds
     internal: true
@@ -681,8 +641,6 @@ light:
             }
 
 # --- LED Control Scripts ---
-# Adapted from official firmware. control_leds dispatches to the correct
-# effect based on voice_assistant_phase.
 
 script:
   - id: control_leds
