@@ -81,7 +81,7 @@ class MusicGroup:
             self._task.cancel()
             try:
                 await self._task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError, Exception:
                 pass
         # Signal all devices to stop speaker
         for out in self._outputs:
@@ -112,7 +112,7 @@ class MusicGroup:
             self._task.cancel()
             try:
                 await self._task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError, Exception:
                 pass
         for out in self._outputs:
             try:

@@ -32,16 +32,16 @@ class Assistant:
 
     def _build_model(self) -> OpenAIChatCompletionsModel:
         client = AsyncOpenAI(
-            base_url=self._settings.openai_base_url or "https://api.openai.com/v1",
-            api_key=self._settings.openai_api_key or "not-set",
+            base_url=self._settings.llm.base_url or "https://api.openai.com/v1",
+            api_key=self._settings.llm.api_key or "not-set",
         )
         return OpenAIChatCompletionsModel(
-            model=self._settings.agent_model,
+            model=self._settings.llm.model,
             openai_client=client,
         )
 
     def _parse_mcp_servers(self) -> list[MCPServerStdio]:
-        raw = self._settings.mcp_servers.strip()
+        raw = self._settings.llm.mcp_servers.strip()
         if not raw:
             return []
 
@@ -68,7 +68,7 @@ class Assistant:
         self, model: OpenAIChatCompletionsModel
     ) -> list[tuple[Agent, list[MCPServerStdio], str]]:
         """Parse sub-agent definitions from config."""
-        raw = self._settings.agents.strip()
+        raw = self._settings.llm.agents.strip()
         if not raw:
             return []
 
@@ -102,9 +102,9 @@ class Assistant:
         return result
 
     def load(self) -> None:
-        logger.info("Initializing agent with model: %s", self._settings.agent_model)
-        if self._settings.openai_base_url:
-            logger.info("  Base URL: %s", self._settings.openai_base_url)
+        logger.info("Initializing agent with model: %s", self._settings.llm.model)
+        if self._settings.llm.base_url:
+            logger.info("  Base URL: %s", self._settings.llm.base_url)
 
         self._mcp_servers = self._parse_mcp_servers()
         if self._mcp_servers:
@@ -125,7 +125,7 @@ class Assistant:
 
         self._agent = Agent[AssistantContext](
             name="voice-assistant",
-            instructions=self._settings.agent_instructions,
+            instructions=self._settings.llm.instructions,
             model=model,
             tools=[*BUILTIN_TOOLS, *sub_agent_tools],
             mcp_servers=self._mcp_servers,
@@ -146,7 +146,7 @@ class Assistant:
                     server.__aexit__(None, None, None),
                     timeout=3.0,
                 )
-            except (TimeoutError, asyncio.CancelledError):
+            except TimeoutError, asyncio.CancelledError:
                 logger.debug("MCP server %s did not stop cleanly", server.name)
             except Exception:
                 logger.exception("Error stopping MCP server: %s", server.name)

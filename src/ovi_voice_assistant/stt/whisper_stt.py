@@ -9,7 +9,7 @@ import numpy as np
 from faster_whisper import WhisperModel
 from faster_whisper.vad import get_vad_model
 
-from ovi_voice_assistant.config import Settings
+from ovi_voice_assistant.config import CACHE_DIR, Settings
 from ovi_voice_assistant.stt.stt import STT, VadStartCallback
 
 logger = logging.getLogger(__name__)
@@ -32,11 +32,12 @@ class WhisperSTT(STT):
         self._vad_model = None
 
     def load(self) -> None:
-        logger.info("Loading faster-whisper model: %s", self._settings.stt_model)
+        logger.info("Loading faster-whisper model: %s", self._settings.stt.model)
         self._model = WhisperModel(
-            self._settings.stt_model,
+            self._settings.stt.model,
             device="cpu",
-            compute_type=self._settings.stt_compute_type,
+            compute_type=self._settings.stt.compute_type,
+            download_root=str(CACHE_DIR / "whisper"),
         )
         self._vad_model = get_vad_model()
         logger.info("STT model loaded (with Silero VAD)")
@@ -47,13 +48,13 @@ class WhisperSTT(STT):
             raise RuntimeError("Call load() first")
 
         audio = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-        if len(audio) < self._settings.mic_sample_rate * 0.1:
+        if len(audio) < self._settings.mic.sample_rate * 0.1:
             return ""
 
         segments, info = self._model.transcribe(
             audio,
-            language=self._settings.stt_language,
-            beam_size=self._settings.stt_beam_size,
+            language=self._settings.stt.language,
+            beam_size=self._settings.stt.beam_size,
             vad_filter=True,
             vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=300),
             condition_on_previous_text=False,
@@ -134,8 +135,8 @@ class WhisperSTT(STT):
                         silence_start = loop.time()
                     elif loop.time() - silence_start >= SILENCE_TIMEOUT_S:
                         speech_duration = speech_bytes / (
-                            self._settings.mic_sample_rate
-                            * self._settings.mic_sample_width
+                            self._settings.mic.sample_rate
+                            * self._settings.mic.sample_width
                         )
                         if speech_duration >= MIN_SPEECH_S:
                             logger.info(

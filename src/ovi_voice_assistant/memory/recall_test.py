@@ -26,7 +26,10 @@ def embedder():
 
 def _make_fact(id, text, embedding=None):
     return Fact(
-        id=id, bank_id="test", text=text, what=text,
+        id=id,
+        bank_id="test",
+        text=text,
+        what=text,
         embedding=embedding or [1.0, 0.0, 0.0],
         created_at="2025-01-01T00:00:00+00:00",
     )
@@ -48,13 +51,18 @@ def test_rrf_merge_empty():
 
 @pytest.mark.asyncio
 async def test_recall_returns_ranked_facts(store, embedder):
-    store.save_facts([
-        _make_fact("1", "Alice likes pizza", [1.0, 0.0, 0.0]),
-        _make_fact("2", "Bob likes tacos", [0.0, 1.0, 0.0]),
-    ])
+    store.save_facts(
+        [
+            _make_fact("1", "Alice likes pizza", [1.0, 0.0, 0.0]),
+            _make_fact("2", "Bob likes tacos", [0.0, 1.0, 0.0]),
+        ]
+    )
     result = await recall(
-        bank_id="test", query="alice pizza", embedder=embedder,
-        store=store, budget=Budget.LOW,
+        bank_id="test",
+        query="alice pizza",
+        embedder=embedder,
+        store=store,
+        budget=Budget.LOW,
     )
     assert len(result.results) > 0
     # The fact matching both semantic and keyword should rank higher
@@ -64,8 +72,11 @@ async def test_recall_returns_ranked_facts(store, embedder):
 @pytest.mark.asyncio
 async def test_recall_empty_store(store, embedder):
     result = await recall(
-        bank_id="test", query="anything", embedder=embedder,
-        store=store, budget=Budget.LOW,
+        bank_id="test",
+        query="anything",
+        embedder=embedder,
+        store=store,
+        budget=Budget.LOW,
     )
     assert result.results == []
     assert result.total_candidates == 0
@@ -73,18 +84,30 @@ async def test_recall_empty_store(store, embedder):
 
 @pytest.mark.asyncio
 async def test_recall_entity_graph(store, embedder):
-    store.save_facts([
-        _make_fact("1", "Alice works at Google", [0.5, 0.5, 0.0]),
-        _make_fact("2", "Bob works at Meta", [0.0, 0.5, 0.5]),
-    ])
-    store.save_entities([Entity(
-        id="e1", bank_id="test", text="Alice",
-        entity_type=EntityType.PERSON, fact_ids=["1"],
-        created_at="2025-01-01T00:00:00+00:00",
-    )])
+    store.save_facts(
+        [
+            _make_fact("1", "Alice works at Google", [0.5, 0.5, 0.0]),
+            _make_fact("2", "Bob works at Meta", [0.0, 0.5, 0.5]),
+        ]
+    )
+    store.save_entities(
+        [
+            Entity(
+                id="e1",
+                bank_id="test",
+                text="Alice",
+                entity_type=EntityType.PERSON,
+                fact_ids=["1"],
+                created_at="2025-01-01T00:00:00+00:00",
+            )
+        ]
+    )
     result = await recall(
-        bank_id="test", query="Tell me about Alice",
-        embedder=embedder, store=store, budget=Budget.LOW,
+        bank_id="test",
+        query="Tell me about Alice",
+        embedder=embedder,
+        store=store,
+        budget=Budget.LOW,
     )
     # Entity graph search should boost Alice's fact
     assert any(f.id == "1" for f in result.results)
@@ -95,13 +118,19 @@ async def test_recall_entity_graph(store, embedder):
 @pytest.mark.asyncio
 async def test_recall_token_budget(store, embedder):
     # Create facts with long text
-    store.save_facts([
-        _make_fact(str(i), f"fact number {i} " * 50, [1.0, 0.0, 0.0])
-        for i in range(20)
-    ])
+    store.save_facts(
+        [
+            _make_fact(str(i), f"fact number {i} " * 50, [1.0, 0.0, 0.0])
+            for i in range(20)
+        ]
+    )
     result = await recall(
-        bank_id="test", query="fact", embedder=embedder,
-        store=store, budget=Budget.HIGH, max_tokens=100,
+        bank_id="test",
+        query="fact",
+        embedder=embedder,
+        store=store,
+        budget=Budget.HIGH,
+        max_tokens=100,
     )
     # Should be limited by token budget, not return all 20
     assert len(result.results) < 20

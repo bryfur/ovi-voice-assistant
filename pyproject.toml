@@ -25,6 +25,8 @@ dependencies = [
     "yt-dlp>=2025.1.0",
     "playwright>=1.49.0",
     "websockets>=14.0",
+    "pyyaml>=6.0",
+    "rich-click>=1.8.0",
 ]
 
 [project.optional-dependencies]

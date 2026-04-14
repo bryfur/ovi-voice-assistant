@@ -170,7 +170,7 @@ class DeviceConnection:
         # AUDIO_CONFIG is re-sent before each TTS_START, so the device
         # reconfigures its decoder automatically.
         music_codec = create_codec(
-            self._settings.codec, 48000, channels=2, nbyte=LC3_MUSIC_NBYTE
+            self._settings.transport.codec, 48000, channels=2, nbyte=LC3_MUSIC_NBYTE
         )
         self._music_output = _EncodingOutput(self._transport, music_codec)
 
@@ -250,7 +250,7 @@ class DeviceConnection:
                 )
 
                 # If the server prefers a different mic codec, request it
-                preferred = self._settings.codec
+                preferred = self._settings.transport.codec
                 if preferred != codec_name:
                     preferred_codec = create_codec(preferred, rate)
                     mic_config_payload = struct.pack(
@@ -300,10 +300,7 @@ class DeviceConnection:
             if self._music_group and self._music_group.is_active:
                 # Group music was paused for voice — resume on all devices
                 await self._music_group.resume()
-            elif (
-                self._context.music_player
-                and self._context.music_player.is_active
-            ):
+            elif self._context.music_player and self._context.music_player.is_active:
                 await self._run_music()
 
     async def _run_music(self) -> None:
@@ -346,7 +343,7 @@ class DeviceConnection:
             self._task.cancel()
             try:
                 await self._task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError, Exception:
                 pass
 
     async def start_pipeline(self, wake_word: str) -> None:

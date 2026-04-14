@@ -118,7 +118,7 @@ async def retain(
         raw_facts = json.loads(cleaned)
         if not isinstance(raw_facts, list):
             raw_facts = [raw_facts]
-    except (json.JSONDecodeError, ValueError):
+    except json.JSONDecodeError, ValueError:
         logger.warning("Failed to parse LLM response as JSON: %s", raw_text[:200])
         return RetainResult(success=False, facts_count=0)
 
@@ -170,7 +170,9 @@ async def retain(
         bank_id, all_raw_entities, embedder, store, now
     )
 
-    logger.info("Retained %d facts, %d entities (bank=%s)", len(facts), len(entity_ids), bank_id)
+    logger.info(
+        "Retained %d facts, %d entities (bank=%s)", len(facts), len(entity_ids), bank_id
+    )
     return RetainResult(
         success=True, facts_count=len(facts), fact_ids=fact_ids, entity_ids=entity_ids
     )

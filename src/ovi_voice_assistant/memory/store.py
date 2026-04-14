@@ -112,9 +112,19 @@ class MemoryStore:
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             [
                 (
-                    f.id, f.bank_id, f.text, f.what, f.who, f.where, f.when, f.why,
-                    f.fact_type.value, f.confidence, json.dumps(f.embedding),
-                    f.created_at, f.occurred_at,
+                    f.id,
+                    f.bank_id,
+                    f.text,
+                    f.what,
+                    f.who,
+                    f.where,
+                    f.when,
+                    f.why,
+                    f.fact_type.value,
+                    f.confidence,
+                    json.dumps(f.embedding),
+                    f.created_at,
+                    f.occurred_at,
                 )
                 for f in facts
             ],
@@ -189,8 +199,13 @@ class MemoryStore:
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             [
                 (
-                    e.id, e.bank_id, e.text, e.entity_type.value,
-                    json.dumps(e.embedding), json.dumps(e.fact_ids), e.created_at,
+                    e.id,
+                    e.bank_id,
+                    e.text,
+                    e.entity_type.value,
+                    json.dumps(e.embedding),
+                    json.dumps(e.fact_ids),
+                    e.created_at,
                 )
                 for e in entities
             ],

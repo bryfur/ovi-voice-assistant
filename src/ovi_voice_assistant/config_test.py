@@ -1,8 +1,15 @@
 """Tests for the config module."""
 
-import pytest
+from unittest.mock import patch
 
-from ovi_voice_assistant.config import DeviceConfig, Settings, parse_devices
+import pytest
+import yaml
+
+from ovi_voice_assistant.config import (
+    DeviceConfig,
+    Settings,
+    parse_devices,
+)
 
 
 class TestDeviceConfigDefaults:
@@ -127,52 +134,55 @@ class TestParseDevicesErrors:
 
 
 class TestSettingsDefaults:
-    def test_defaults(self, monkeypatch):
-        monkeypatch.delenv("OVI_DEVICES", raising=False)
-        monkeypatch.delenv("OVI_TRANSPORT", raising=False)
-        monkeypatch.delenv("OVI_CODEC", raising=False)
-        monkeypatch.delenv("OVI_STT_PROVIDER", raising=False)
-        monkeypatch.delenv("OVI_TTS_PROVIDER", raising=False)
-
-        s = Settings(_env_file=None)
+    def test_defaults(self, tmp_path):
+        with patch(
+            "ovi_voice_assistant.config.CONFIG_PATH", tmp_path / "nonexistent.yaml"
+        ):
+            s = Settings(_env_file=None)
 
         assert s.devices == ""
-        assert s.transport == "wifi"
-        assert s.codec == "lc3"
-        assert s.speaker_sample_rate == 0
-        assert s.stt_provider == "whisper"
-        assert s.tts_provider == "kokoro"
-        assert s.stt_model == "base.en"
-        assert s.stt_device == "cpu"
-        assert s.stt_language == "en"
-        assert s.stt_beam_size == 1
-        assert s.stt_compute_type == "int8"
-        assert s.tts_model == "af_heart"
-        assert s.tts_speaker_id is None
-        assert s.tts_length_scale == 1.0
-        assert s.tts_sentence_silence == 0.1
-        assert s.openai_api_key == ""
-        assert s.openai_base_url == ""
-        assert s.agent_model == "gpt-4o-mini"
-        assert s.mic_sample_rate == 16000
-        assert s.mic_sample_width == 2
-        assert s.mic_channels == 1
-        assert s.ble_device_name is None
-        assert s.ble_device_address is None
+        assert s.transport.type == "wifi"
+        assert s.transport.codec == "lc3"
+        assert s.transport.speaker_sample_rate == 0
+        assert s.stt.provider == "whisper"
+        assert s.tts.provider == "kokoro"
+        assert s.stt.model == "base.en"
+        assert s.stt.device == "cpu"
+        assert s.stt.language == "en"
+        assert s.stt.beam_size == 1
+        assert s.stt.compute_type == "int8"
+        assert s.tts.model == "af_heart"
+        assert s.tts.speaker_id is None
+        assert s.tts.length_scale == 1.0
+        assert s.tts.sentence_silence == 0.1
+        assert s.llm.api_key == ""
+        assert s.llm.base_url == ""
+        assert s.llm.model == "gpt-4o-mini"
+        assert s.mic.sample_rate == 16000
+        assert s.mic.sample_width == 2
+        assert s.mic.channels == 1
+        assert s.ble.device_name is None
+        assert s.ble.device_address is None
+        assert s.memory.db_path == "~/.ovi/memory.db"
+        assert s.automations.path == "~/.ovi/automations.json"
 
 
 class TestSettingsGetDevices:
-    def test_empty_devices(self, monkeypatch):
-        monkeypatch.delenv("OVI_DEVICES", raising=False)
-        s = Settings(_env_file=None, devices="")
+    def test_empty_devices(self, tmp_path):
+        with patch(
+            "ovi_voice_assistant.config.CONFIG_PATH", tmp_path / "nonexistent.yaml"
+        ):
+            s = Settings(_env_file=None, devices="")
 
         result = s.get_devices()
 
         assert result == []
 
-    def test_with_device_string(self, monkeypatch):
-        monkeypatch.delenv("OVI_DEVICES", raising=False)
-        s = Settings(_env_file=None, devices="10.0.0.1:6055:key")
+    def test_with_device_string(self, tmp_path):
+        with patch(
+            "ovi_voice_assistant.config.CONFIG_PATH", tmp_path / "nonexistent.yaml"
+        ):
+            s = Settings(_env_file=None, devices="10.0.0.1:6055:key")
 
         devices = s.get_devices()
 
@@ -181,11 +191,56 @@ class TestSettingsGetDevices:
         assert devices[0].port == 6055
         assert devices[0].encryption_key == "key"
 
-    def test_with_multiple_devices(self, monkeypatch):
-        monkeypatch.delenv("OVI_DEVICES", raising=False)
-        s = Settings(_env_file=None, devices="10.0.0.1,10.0.0.2:1234")
+    def test_with_multiple_devices(self, tmp_path):
+        with patch(
+            "ovi_voice_assistant.config.CONFIG_PATH", tmp_path / "nonexistent.yaml"
+        ):
+            s = Settings(_env_file=None, devices="10.0.0.1,10.0.0.2:1234")
 
         devices = s.get_devices()
 
         assert len(devices) == 2
         assert devices[1].port == 1234
+
+
+class TestSettingsYamlIntegration:
+    def test_yaml_values_applied(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            yaml.dump(
+                {
+                    "llm": {"model": "llama3"},
+                    "transport": {"codec": "opus"},
+                }
+            )
+        )
+        monkeypatch.delenv("OVI_LLM__MODEL", raising=False)
+        monkeypatch.delenv("OVI_TRANSPORT__CODEC", raising=False)
+
+        with patch("ovi_voice_assistant.config.CONFIG_PATH", config_file):
+            s = Settings(_env_file=None)
+
+        assert s.llm.model == "llama3"
+        assert s.transport.codec == "opus"
+
+    def test_env_var_overrides_yaml(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml.dump({"llm": {"model": "llama3"}}))
+        monkeypatch.setenv("OVI_LLM__MODEL", "gpt-4o")
+
+        with patch("ovi_voice_assistant.config.CONFIG_PATH", config_file):
+            s = Settings(_env_file=None)
+
+        assert s.llm.model == "gpt-4o"
+
+    def test_init_kwarg_overrides_yaml(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml.dump({"llm": {"model": "llama3"}}))
+        monkeypatch.delenv("OVI_LLM__MODEL", raising=False)
+
+        with patch("ovi_voice_assistant.config.CONFIG_PATH", config_file):
+            from ovi_voice_assistant.config import LlmConfig
+
+            s = Settings(_env_file=None, llm=LlmConfig(model="custom-model"))
+
+        assert s.llm.model == "custom-model"

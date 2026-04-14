@@ -8,13 +8,13 @@ from pathlib import Path
 
 import numpy as np
 
-from ovi_voice_assistant.config import Settings
+from ovi_voice_assistant.config import CACHE_DIR, Settings
 from ovi_voice_assistant.tts import resample, split_sentences
 from ovi_voice_assistant.tts.tts import TTS
 
 logger = logging.getLogger(__name__)
 
-MODELS_DIR = Path.home() / ".cache" / "kokoro"
+MODELS_DIR = CACHE_DIR / "kokoro"
 
 _MODEL_URL = (
     "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX"
@@ -108,7 +108,7 @@ class KokoroTTS(TTS):
         if self._kokoro is None:
             raise RuntimeError("Call load() first")
 
-        voice = self._settings.tts_model or "af_heart"
+        voice = self._settings.tts.model or "af_heart"
         lang = "en-gb" if voice.startswith(("bf_", "bm_")) else "en-us"
         phonemes = self._kokoro.tokenizer.phonemize(text, lang)
 

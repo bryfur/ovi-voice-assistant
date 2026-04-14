@@ -46,7 +46,13 @@ def llm():
 
 
 def test_build_fact_text():
-    raw = {"what": "Alice likes pizza", "who": "Alice", "where": "NYC", "when": "", "why": ""}
+    raw = {
+        "what": "Alice likes pizza",
+        "who": "Alice",
+        "where": "NYC",
+        "when": "",
+        "why": "",
+    }
     text = _build_fact_text(raw)
     assert "Alice likes pizza" in text
     assert "who: Alice" in text
@@ -155,15 +161,23 @@ async def test_retain_entity_dedup(store, embedder, llm):
     # First retain — creates "Alice" entity
     embedder.embed = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
     await retain(
-        bank_id="test", content="first", llm=llm, llm_model="m",
-        embedder=embedder, store=store,
+        bank_id="test",
+        content="first",
+        llm=llm,
+        llm_model="m",
+        embedder=embedder,
+        store=store,
     )
 
     # Second retain — "Alice" entity should merge
     embedder.embed = AsyncMock(return_value=[[0.4, 0.5, 0.6]])
     await retain(
-        bank_id="test", content="second", llm=llm, llm_model="m",
-        embedder=embedder, store=store,
+        bank_id="test",
+        content="second",
+        llm=llm,
+        llm_model="m",
+        embedder=embedder,
+        store=store,
     )
 
     entities = store.get_entities("test")

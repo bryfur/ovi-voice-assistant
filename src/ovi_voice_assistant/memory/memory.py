@@ -34,7 +34,7 @@ class Memory:
         self._store: MemoryStore | None = None
         self._embedder: Embedder | None = None
         self._llm: AsyncOpenAI | None = None
-        self._bank_id = settings.memory_bank_id
+        self._bank_id = settings.memory.bank_id
 
     @property
     def bank_id(self) -> str:
@@ -42,23 +42,23 @@ class Memory:
 
     def load(self) -> None:
         """Open the SQLite store and load the local embedding model."""
-        raw_path = self._settings.memory_db_path
+        raw_path = self._settings.memory.db_path
         db_path = raw_path if raw_path == ":memory:" else Path(raw_path).expanduser()
         self._store = MemoryStore(db_path)
         self._store.open()
 
-        self._embedder = Embedder(model=self._settings.memory_embedding_model)
+        self._embedder = Embedder(model=self._settings.memory.embedding_model)
         self._embedder.load()
 
         self._llm = AsyncOpenAI(
-            base_url=self._settings.openai_base_url or "https://api.openai.com/v1",
-            api_key=self._settings.openai_api_key or "not-set",
+            base_url=self._settings.llm.base_url or "https://api.openai.com/v1",
+            api_key=self._settings.llm.api_key or "not-set",
         )
 
         logger.info(
             "Memory loaded (db=%s, embedding=%s)",
             db_path,
-            self._settings.memory_embedding_model,
+            self._settings.memory.embedding_model,
         )
 
     def close(self) -> None:
@@ -76,7 +76,7 @@ class Memory:
             bank_id=self._bank_id,
             content=content,
             llm=self._llm,
-            llm_model=self._settings.agent_model,
+            llm_model=self._settings.llm.model,
             embedder=self._embedder,
             store=self._store,
             context=context,
@@ -96,4 +96,3 @@ class Memory:
             budget=budget,
             max_tokens=max_tokens,
         )
-

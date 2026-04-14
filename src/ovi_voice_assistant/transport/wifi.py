@@ -81,7 +81,7 @@ class WiFiTransport(DeviceTransport):
             self._reconnect_task.cancel()
             try:
                 await self._reconnect_task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError, Exception:
                 pass
             self._reconnect_task = None
 
@@ -145,7 +145,7 @@ class WiFiTransport(DeviceTransport):
             self._recv_task.cancel()
             try:
                 await self._recv_task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError, Exception:
                 pass
             self._recv_task = None
 

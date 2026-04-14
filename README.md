@@ -9,18 +9,18 @@ Handles the full voice pipeline: wake word detection (on-device) → speech-to-t
 ```
 ESPHome Device (wake word) ──► mic audio over WiFi/BLE ──► Ovi Server
                                                               │
-                                                        STT (faster-whisper / Nemotron)
+                                                        STT (Nemotron / Whisper)
                                                               │
                                                         Agent (OpenAI Agents SDK)
                                                               │
-                                                        TTS (Piper / pocket-tts)
+                                                        TTS (Kokoro / Piper)
                                                               │
 ESPHome Device (speaker)   ◄── encoded audio ◄───────────────┘
 ```
 
-- **STT**: [faster-whisper](https://github.com/SYSTRAN/faster-whisper) with Silero VAD, or [Nemotron](https://build.nvidia.com/nvidia/nemotron-speech-streaming-en) (ONNX streaming). CPU inference.
+- **STT**: [Nemotron Speech 600M](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b) streaming RNNT (default) or [faster-whisper](https://github.com/SYSTRAN/faster-whisper). Both use Silero VAD. CPU inference.
 - **Agent**: [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) — works with any OpenAI-compatible endpoint (OpenAI, ollama, vLLM, LM Studio, etc.). Supports MCP tools, sub-agents, and session memory.
-- **TTS**: [Piper](https://github.com/rhasspy/piper) ONNX voices (default) or [pocket-tts](https://github.com/kyutai-labs/pocket-tts) (Kyutai). CPU inference.
+- **TTS**: [Kokoro](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) 82M ONNX int8 (default) or [Piper](https://github.com/rhasspy/piper) ONNX voices. CPU inference.
 - **Transport**: WiFi (plain TCP) or BLE (GATT). Audio codecs: PCM, LC3, Opus.
 - **Music**: YouTube Music, Spotify, Apple Music via browser automation. Multi-room synchronized playback.
 - **Memory**: Persistent fact extraction and recall (SQLite + embeddings).
@@ -67,12 +67,39 @@ uv run esphome run esphome/voice-pe.yaml
 
 ### 3. Configure
 
-Edit `.env`:
+On first run, Ovi launches an interactive setup wizard that walks you through LLM, STT, TTS, device, and codec selection:
 
 ```bash
-OVI_DEVICES=voice-pe-XXXX.local
-OVI_OPENAI_BASE_URL=http://localhost:11434/v1   # ollama example
-OVI_AGENT_MODEL=llama3.2
+ovi
+```
+
+The wizard saves configuration to `~/.ovi/config.yaml`. You can re-run it anytime:
+
+```bash
+ovi --setup
+```
+
+Or edit the YAML directly:
+
+```yaml
+# ~/.ovi/config.yaml
+
+llm:
+  base_url: http://localhost:11434/v1   # ollama, LM Studio, etc.
+  model: llama3.2
+
+stt:
+  provider: nemotron         # nemotron or whisper
+  model: int8-dynamic
+
+tts:
+  provider: kokoro           # kokoro or piper
+  model: af_heart
+
+devices: voice-pe-XXXX.local
+
+transport:
+  codec: lc3                 # lc3, opus, or pcm
 ```
 
 ### 4. Run
@@ -101,25 +128,75 @@ ovi --transport ble
 
 ## Configuration
 
-All settings use the `OVI_` environment variable prefix or the `.env` file.
+Ovi uses a layered configuration system. Sources are applied in this order (later overrides earlier):
 
-| Variable | Default | Description |
-|---|---|---|
-| `OVI_DEVICES` | | Comma-separated devices: `host[:port[:key]]` |
-| `OVI_OPENAI_BASE_URL` | | LLM endpoint |
-| `OVI_OPENAI_API_KEY` | | API key for the LLM endpoint |
-| `OVI_AGENT_MODEL` | `gpt-4o-mini` | Model name |
-| `OVI_STT_MODEL` | `base.en` | Whisper model |
-| `OVI_STT_PROVIDER` | `whisper` | STT provider (`whisper`, `nemotron`) |
-| `OVI_TTS_MODEL` | `en_US-lessac-medium` | Piper voice / pocket-tts voice |
-| `OVI_TTS_PROVIDER` | `piper` | TTS provider (`piper`, `pocket`) |
-| `OVI_TRANSPORT` | `wifi` | Transport (`wifi`, `ble`) |
-| `OVI_CODEC` | `lc3` | Audio codec (`pcm`, `lc3`, `opus`) |
-| `OVI_MCP_SERVERS` | | MCP tool servers JSON or `@path/to/file.json` |
-| `OVI_AGENTS` | | Sub-agents JSON or `@path/to/agents.json` |
-| `OVI_MEMORY_ENABLED` | `true` | Enable persistent memory |
+1. **YAML config** — `~/.ovi/config.yaml` (created by `ovi --setup`)
+2. **`.env` file** — dotenv in the working directory
+3. **Environment variables** — `OVI_` prefix with `__` for nesting
+4. **CLI arguments** — `--agent-model`, `--codec`, etc.
 
-CLI arguments override `.env` values. Run `ovi --help` for all options.
+### YAML config
+
+The config file lives at `~/.ovi/config.yaml` and uses nested sections:
+
+```yaml
+llm:
+  api_key: sk-...
+  base_url: http://localhost:11434/v1
+  model: llama3.2
+  mcp_servers: '@~/.ovi/mcp.json'
+  agents: '@~/.ovi/agents.json'
+
+stt:
+  provider: nemotron    # nemotron, whisper
+  model: int8-dynamic   # int8-dynamic, int8-static, fp16, fp32
+  device: cpu           # cpu, cuda
+
+tts:
+  provider: kokoro      # kokoro, piper
+  model: af_heart
+
+devices: voice-pe-XXXX.local
+
+transport:
+  type: wifi            # wifi, ble
+  codec: lc3            # lc3, opus, pcm
+
+memory:
+  enabled: true
+```
+
+### Environment variable overrides
+
+Override any config value using the `OVI_` prefix and `__` as the nesting delimiter:
+
+```bash
+OVI_LLM__MODEL=gpt-4o-mini ovi             # override LLM model
+OVI_STT__PROVIDER=nemotron ovi              # switch STT provider
+OVI_TRANSPORT__CODEC=opus ovi               # change codec
+OVI_LLM__API_KEY=sk-... ovi                 # set API key without saving to file
+```
+
+### CLI overrides
+
+CLI arguments take highest priority:
+
+```bash
+ovi --agent-model gpt-4o --codec opus --stt-model small.en
+```
+
+Run `ovi --help` for all options.
+
+### Storage paths
+
+| Path | Contents |
+|---|---|
+| `~/.ovi/config.yaml` | Configuration file |
+| `~/.ovi/memory.db` | Persistent memory (SQLite) |
+| `~/.ovi/automations.json` | Scheduled automations |
+| `~/.cache/ovi/` | Model caches (whisper, nemotron, embeddings) |
+| `~/.cache/kokoro/` | Kokoro TTS model cache |
+| `~/.cache/piper-voices/` | Piper TTS voice cache |
 
 ## Encryption
 
@@ -184,8 +261,8 @@ src/ovi_voice_assistant/
     pipeline_output.py       Pipeline event types
     codec/                   PCM, LC3, Opus encoding/decoding
     transport/               WiFi (TCP) and BLE (GATT) transports
-    stt/                     Whisper + Nemotron speech-to-text
-    tts/                     Piper + Pocket text-to-speech
+    stt/                     Nemotron + Whisper speech-to-text
+    tts/                     Kokoro + Piper text-to-speech
     agent/                   OpenAI Agents SDK + MCP tools
     memory/                  SQLite fact store + embeddings
     music/                   YouTube, Spotify, Apple Music

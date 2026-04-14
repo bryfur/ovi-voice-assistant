@@ -80,7 +80,9 @@ async def recall(
     temporal_results = _temporal_search(bank_id, store, limit)
 
     # Merge via RRF
-    rrf_scores = _rrf_merge(semantic_results, keyword_results, entity_results, temporal_results)
+    rrf_scores = _rrf_merge(
+        semantic_results, keyword_results, entity_results, temporal_results
+    )
 
     if not rrf_scores:
         return RecallResult(results=[], total_candidates=0)
@@ -152,7 +154,7 @@ def _temporal_search(
             delta_days = (now - created).total_seconds() / 86400.0
             score = math.exp(-delta_days / _TEMPORAL_HALF_LIFE)
             scored.append((fact.id, score))
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             continue
 
     scored.sort(key=lambda x: x[1], reverse=True)

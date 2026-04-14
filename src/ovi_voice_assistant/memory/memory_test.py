@@ -4,19 +4,18 @@ from unittest.mock import patch
 
 import pytest
 
-from ovi_voice_assistant.config import Settings
+from ovi_voice_assistant.config import MemoryConfig, Settings
 from ovi_voice_assistant.memory import Memory
 
 
 @pytest.fixture
-def settings():
-    return Settings(
-        _env_file=None,
-        devices="",
-        openai_api_key="test-key",
-        memory_enabled=True,
-        memory_db_path=":memory:",
-    )
+def settings(tmp_path):
+    with patch("ovi_voice_assistant.config.CONFIG_PATH", tmp_path / "c.yaml"):
+        return Settings(
+            _env_file=None,
+            devices="",
+            memory=MemoryConfig(enabled=True, db_path=":memory:"),
+        )
 
 
 @pytest.mark.asyncio

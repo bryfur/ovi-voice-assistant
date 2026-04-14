@@ -7,13 +7,13 @@ from pathlib import Path
 
 import numpy as np
 
-from ovi_voice_assistant.config import Settings
+from ovi_voice_assistant.config import CACHE_DIR, Settings
 from ovi_voice_assistant.tts import resample, split_sentences
 from ovi_voice_assistant.tts.tts import TTS
 
 logger = logging.getLogger(__name__)
 
-MODELS_DIR = Path.home() / ".cache" / "piper-voices"
+MODELS_DIR = CACHE_DIR / "piper"
 
 
 class PiperTTS(TTS):
@@ -30,7 +30,7 @@ class PiperTTS(TTS):
     def load(self) -> None:
         from piper import PiperVoice
 
-        model_path = self._resolve_model(self._settings.tts_model)
+        model_path = self._resolve_model(self._settings.tts.model)
         logger.info("Loading piper TTS model: %s", model_path)
         self._voice = PiperVoice.load(str(model_path), use_cuda=False)
         native_rate = self._voice.config.sample_rate

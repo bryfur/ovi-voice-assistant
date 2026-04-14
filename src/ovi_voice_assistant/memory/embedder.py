@@ -7,6 +7,8 @@ import logging
 
 from fastembed import TextEmbedding
 
+from ovi_voice_assistant.config import CACHE_DIR
+
 logger = logging.getLogger(__name__)
 
 
@@ -19,7 +21,9 @@ class Embedder:
 
     def load(self) -> None:
         """Load the embedding model (downloads on first use)."""
-        self._model = TextEmbedding(self._model_name)
+        self._model = TextEmbedding(
+            self._model_name, cache_dir=str(CACHE_DIR / "fastembed")
+        )
         logger.info("Embedding model loaded: %s", self._model_name)
 
     def _embed_sync(self, texts: list[str]) -> list[list[float]]:

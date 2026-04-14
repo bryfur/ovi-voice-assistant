@@ -1,62 +1,72 @@
 """Entry point for the voice assistant server."""
 
-import argparse
 import asyncio
 import logging
 import signal
 import sys
 
+import rich_click as click
+
 from ovi_voice_assistant.config import DeviceConfig, Settings, parse_devices
 from ovi_voice_assistant.voice_assistant import VoiceAssistant
 
+click.rich_click.USE_RICH_MARKUP = True
+click.rich_click.SHOW_ARGUMENTS = True
+click.rich_click.GROUP_ARGUMENTS_OPTIONS = True
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Ovi — Open Voice Assistant")
-    parser.add_argument(
-        "devices",
-        nargs="*",
-        help="Device addresses: IP, hostname.local, or host:port:encryption_key (default port: 6055)",
-    )
-    parser.add_argument(
-        "--scan", action="store_true", help="Scan for ESPHome devices on the network"
-    )
-    parser.add_argument(
-        "--gen-key", action="store_true", help="Generate an encryption key and exit"
-    )
-    parser.add_argument(
-        "--stt-provider", default=None, help="STT provider (whisper)"
-    )
-    parser.add_argument(
-        "--tts-provider", default=None, help="TTS provider (kokoro, piper)"
-    )
-    parser.add_argument("--stt-model", default=None, help="STT model name")
-    parser.add_argument("--tts-model", default=None, help="TTS model name")
-    parser.add_argument("--agent-model", default=None, help="OpenAI model name")
-    parser.add_argument(
-        "--mcp-servers",
-        default=None,
-        help='MCP servers JSON: \'[{"command": "npx", "args": ["-y", "@dangahagan/weather-mcp"]}]\'',
-    )
-    parser.add_argument(
-        "--agents", default=None, help="Sub-agents JSON or @path/to/agents.json"
-    )
-    parser.add_argument(
-        "--transport",
-        default=None,
-        choices=["wifi", "ble"],
-        help="Transport: wifi or ble (default: wifi)",
-    )
-    parser.add_argument(
-        "--codec",
-        default=None,
-        choices=["pcm", "lc3", "opus"],
-        help="Audio codec: pcm, lc3, opus (default: lc3)",
-    )
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    args = parser.parse_args()
 
+@click.command()
+@click.argument("devices", nargs=-1)
+@click.option("--scan", is_flag=True, help="Scan for ESPHome devices on the network.")
+@click.option("--gen-key", is_flag=True, help="Generate an encryption key and exit.")
+@click.option("--setup", is_flag=True, help="Run the interactive setup wizard.")
+@click.option("--stt-provider", default=None, help="STT provider (whisper).")
+@click.option("--tts-provider", default=None, help="TTS provider (kokoro, piper).")
+@click.option("--stt-model", default=None, help="STT model name.")
+@click.option("--tts-model", default=None, help="TTS model name.")
+@click.option("--agent-model", default=None, help="LLM model name.")
+@click.option(
+    "--mcp-servers",
+    default=None,
+    help='MCP servers JSON: \'[{"command": "npx", "args": [...]}]\'.',
+)
+@click.option("--agents", default=None, help="Sub-agents JSON or @path/to/agents.json.")
+@click.option(
+    "--transport",
+    default=None,
+    type=click.Choice(["wifi", "ble"], case_sensitive=False),
+    help="Transport: wifi or ble.",
+)
+@click.option(
+    "--codec",
+    default=None,
+    type=click.Choice(["pcm", "lc3", "opus"], case_sensitive=False),
+    help="Audio codec: pcm, lc3, opus.",
+)
+@click.option("--debug", is_flag=True, help="Enable debug logging.")
+def main(
+    devices,
+    scan,
+    gen_key,
+    setup,
+    stt_provider,
+    tts_provider,
+    stt_model,
+    tts_model,
+    agent_model,
+    mcp_servers,
+    agents,
+    transport,
+    codec,
+    debug,
+) -> None:
+    """Ovi — Open Voice Assistant.
+
+    Connect to ESPHome devices by passing DEVICES as IP addresses,
+    hostnames, or host:port:key triples.
+    """
     logging.basicConfig(
-        level=logging.DEBUG if args.debug else logging.INFO,
+        level=logging.DEBUG if debug else logging.INFO,
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
@@ -65,52 +75,47 @@ def main() -> None:
         logging.getLogger(name).setLevel(logging.INFO)
     logger = logging.getLogger("ovi_voice_assistant")
 
-    if args.gen_key:
-        import base64
-        import secrets
-        from pathlib import Path
-
-        key = base64.b64encode(secrets.token_bytes(32)).decode()
-
-        # Write to esphome/secrets.yaml
-        secrets_path = Path("esphome/secrets.yaml")
-        if secrets_path.exists():
-            content = secrets_path.read_text()
-            if "api_encryption_key" not in content:
-                content += f'api_encryption_key: "{key}"\n'
-                secrets_path.write_text(content)
-                print(f"Added api_encryption_key to {secrets_path}")
-            else:
-                print(f"api_encryption_key already exists in {secrets_path}")
-                print(f"New key (not saved): {key}")
-        else:
-            print(f"{secrets_path} not found — key not saved")
-            print(f"Key: {key}")
-
-        print("\nConnect with:")
-        print(f"  ovi DEVICE_HOST:6055::{key}")
+    if gen_key:
+        _gen_key()
         return
 
     # Scan mode — just discover and print devices
-    if args.scan:
+    if scan:
         asyncio.run(_scan())
         return
 
-    # Build settings from env + CLI
-    cli_fields = [
-        "stt_provider",
-        "tts_provider",
-        "stt_model",
-        "tts_model",
-        "agent_model",
-        "mcp_servers",
-        "agents",
-        "transport",
-        "codec",
-    ]
-    overrides = {
-        f: getattr(args, f) for f in cli_fields if getattr(args, f) is not None
-    }
+    # Setup wizard — run explicitly or on first start
+    from ovi_voice_assistant.setup import needs_setup, run_setup
+
+    if setup:
+        run_setup()
+        return
+
+    if needs_setup() and sys.stdin.isatty():
+        click.echo("No configuration found. Running first-time setup...\n")
+        run_setup()
+        click.echo()
+
+    # Build overrides dict — CLI args override nested config via init kwargs
+    overrides: dict = {}
+    if stt_provider:
+        overrides.setdefault("stt", {})["provider"] = stt_provider
+    if stt_model:
+        overrides.setdefault("stt", {})["model"] = stt_model
+    if tts_provider:
+        overrides.setdefault("tts", {})["provider"] = tts_provider
+    if tts_model:
+        overrides.setdefault("tts", {})["model"] = tts_model
+    if agent_model:
+        overrides.setdefault("llm", {})["model"] = agent_model
+    if mcp_servers:
+        overrides.setdefault("llm", {})["mcp_servers"] = mcp_servers
+    if agents:
+        overrides.setdefault("llm", {})["agents"] = agents
+    if transport:
+        overrides.setdefault("transport", {})["type"] = transport
+    if codec:
+        overrides.setdefault("transport", {})["codec"] = codec
 
     settings = Settings(**overrides)
 
@@ -119,27 +124,31 @@ def main() -> None:
     # (e.g., LC3 snaps 22050→24000), then create TTS at that rate.
     from ovi_voice_assistant.codec import create_codec
 
-    probe_rate = settings.speaker_sample_rate if settings.speaker_sample_rate else 24000
-    probe_codec = create_codec(settings.codec, probe_rate)
+    probe_rate = (
+        settings.transport.speaker_sample_rate
+        if settings.transport.speaker_sample_rate
+        else 24000
+    )
+    probe_codec = create_codec(settings.transport.codec, probe_rate)
     tts_sample_rate = probe_codec.sample_rate  # actual codec rate
 
     logger.info("Starting Ovi")
-    logger.info("  Transport: %s", settings.transport)
-    logger.info("  Codec: %s", settings.codec)
-    logger.info("  STT: %s (%s)", settings.stt_provider, settings.stt_model)
-    logger.info("  TTS: %s (%s)", settings.tts_provider, settings.tts_model)
-    logger.info("  Agent: %s", settings.agent_model)
-    if settings.mcp_servers:
-        logger.info("  MCP: %s", settings.mcp_servers)
+    logger.info("  Transport: %s", settings.transport.type)
+    logger.info("  Codec: %s", settings.transport.codec)
+    logger.info("  STT: %s (%s)", settings.stt.provider, settings.stt.model)
+    logger.info("  TTS: %s (%s)", settings.tts.provider, settings.tts.model)
+    logger.info("  Agent: %s", settings.llm.model)
+    if settings.llm.mcp_servers:
+        logger.info("  MCP: %s", settings.llm.mcp_servers)
 
     # Initialize memory if enabled
     memory = None
-    if settings.memory_enabled:
+    if settings.memory.enabled:
         from ovi_voice_assistant.memory import Memory
 
         memory = Memory(settings)
         memory.load()
-        logger.info("  Memory: SQLite (bank=%s)", settings.memory_bank_id)
+        logger.info("  Memory: SQLite (bank=%s)", settings.memory.bank_id)
 
     # Load models — TTS uses the codec's actual sample rate
     pipeline = VoiceAssistant(settings, tts_sample_rate=tts_sample_rate)
@@ -147,25 +156,54 @@ def main() -> None:
 
     actual_tts_rate = pipeline.tts.sample_rate
 
-    if settings.transport == "ble":
+    if settings.transport.type == "ble":
         # BLE mode — single device, direct connection
         logger.info("  Speaker sample rate: %d Hz", actual_tts_rate)
         asyncio.run(_serve_ble(settings, pipeline, actual_tts_rate, memory=memory))
     else:
         # WiFi mode — one or more devices via DeviceManager
-        devices = _resolve_devices(args, settings, logger)
-        if devices is None:
+        resolved = _resolve_devices(devices, settings, logger)
+        if resolved is None:
             sys.exit(1)
         logger.info("  Speaker sample rate: %d Hz", actual_tts_rate)
         asyncio.run(
-            _serve_wifi(devices, settings, pipeline, actual_tts_rate, memory=memory)
+            _serve_wifi(resolved, settings, pipeline, actual_tts_rate, memory=memory)
         )
 
 
-def _resolve_devices(args, settings, logger) -> list[DeviceConfig] | None:
+def _gen_key() -> None:
+    """Generate an encryption key and optionally write to esphome/secrets.yaml."""
+    import base64
+    import secrets
+    from pathlib import Path
+
+    key = base64.b64encode(secrets.token_bytes(32)).decode()
+
+    # Write to esphome/secrets.yaml
+    secrets_path = Path("esphome/secrets.yaml")
+    if secrets_path.exists():
+        content = secrets_path.read_text()
+        if "api_encryption_key" not in content:
+            content += f'api_encryption_key: "{key}"\n'
+            secrets_path.write_text(content)
+            click.echo(f"Added api_encryption_key to {secrets_path}")
+        else:
+            click.echo(f"api_encryption_key already exists in {secrets_path}")
+            click.echo(f"New key (not saved): {key}")
+    else:
+        click.echo(f"{secrets_path} not found — key not saved")
+        click.echo(f"Key: {key}")
+
+    click.echo("\nConnect with:")
+    click.echo(f"  ovi DEVICE_HOST:6055::{key}")
+
+
+def _resolve_devices(
+    cli_devices: tuple, settings: Settings, logger
+) -> list[DeviceConfig] | None:
     """Parse device addresses from CLI args or settings."""
-    if args.devices:
-        devices = parse_devices(",".join(args.devices))
+    if cli_devices:
+        devices = parse_devices(",".join(cli_devices))
     else:
         devices = settings.get_devices()
 
@@ -199,24 +237,24 @@ async def _scan() -> None:
     """Discover ESPHome devices on the local network."""
     from ovi_voice_assistant.discovery import discover_devices
 
-    print("Scanning for ESPHome devices (5s)...")
+    click.echo("Scanning for ESPHome devices (5s)...")
     devices = await discover_devices(timeout=5.0)
 
     if not devices:
-        print(
+        click.echo(
             "No devices found. Make sure your Voice PE is powered on and connected to WiFi."
         )
         return
 
-    print(f"\nFound {len(devices)} device(s):\n")
-    print(f"  {'Name':<30} {'IP':<18} {'Port'}")
-    print(f"  {'─' * 30} {'─' * 18} {'─' * 5}")
+    click.echo(f"\nFound {len(devices)} device(s):\n")
+    click.echo(f"  {'Name':<30} {'IP':<18} {'Port'}")
+    click.echo(f"  {'─' * 30} {'─' * 18} {'─' * 5}")
     for d in devices:
-        print(f"  {d['name']:<30} {d['ip']:<18} {d['port']}")
+        click.echo(f"  {d['name']:<30} {d['ip']:<18} {d['port']}")
 
-    print("\nConnect with:")
+    click.echo("\nConnect with:")
     for d in devices:
-        print(f"  ovi {d['host']}")
+        click.echo(f"  ovi {d['host']}")
 
 
 def _create_scheduler(
@@ -229,7 +267,7 @@ def _create_scheduler(
 
     from ovi_voice_assistant.scheduler import Scheduler
 
-    path = Path(settings.automations_path).expanduser()
+    path = Path(settings.automations.path).expanduser()
     scheduler = Scheduler(
         path=path,
         run_prompt=pipeline.agent.run_text,
@@ -290,8 +328,8 @@ async def _serve_ble(
     from ovi_voice_assistant.device_connection import DeviceConnection
     from ovi_voice_assistant.transport.ble import BLETransport
 
-    transport = BLETransport(settings.ble_device_name, settings.ble_device_address)
-    codec = create_codec(settings.codec, tts_rate)
+    transport = BLETransport(settings.ble.device_name, settings.ble.device_address)
+    codec = create_codec(settings.transport.codec, tts_rate)
 
     await pipeline.start()
     conn = DeviceConnection(transport, codec, pipeline, settings)

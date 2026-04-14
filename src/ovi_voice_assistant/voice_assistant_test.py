@@ -22,8 +22,8 @@ from ovi_voice_assistant.voice_assistant import (
 def _make_va():
     """Create a VoiceAssistant with fully mocked internals."""
     settings = MagicMock()
-    settings.stt_provider = "whisper"
-    settings.tts_provider = "piper"
+    settings.stt.provider = "whisper"
+    settings.tts.provider = "piper"
 
     with (
         patch("ovi_voice_assistant.voice_assistant._create_stt") as mock_stt_factory,
@@ -62,14 +62,14 @@ async def _async_iter(items):
 class TestCreateProviders:
     def test_create_stt_unknown_provider(self):
         settings = MagicMock()
-        settings.stt_provider = "nonexistent"
+        settings.stt.provider = "nonexistent"
 
         with pytest.raises(ValueError, match="Unknown STT provider"):
             _create_stt(settings)
 
     def test_create_tts_unknown_provider(self):
         settings = MagicMock()
-        settings.tts_provider = "nonexistent"
+        settings.tts.provider = "nonexistent"
 
         with pytest.raises(ValueError, match="Unknown TTS provider"):
             _create_tts(settings)

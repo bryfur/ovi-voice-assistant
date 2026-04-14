@@ -1,6 +1,7 @@
 """Tests for ovi_voice_assistant.tts.piper_tts."""
 
 from collections.abc import AsyncIterator
+from unittest.mock import patch
 
 import pytest
 
@@ -9,8 +10,9 @@ from ovi_voice_assistant.tts.piper_tts import PiperTTS
 
 
 @pytest.fixture
-def settings():
-    return Settings(_env_file=None, devices="", openai_api_key="test-key")
+def settings(tmp_path):
+    with patch("ovi_voice_assistant.config.CONFIG_PATH", tmp_path / "c.yaml"):
+        return Settings(_env_file=None, devices="")
 
 
 class MockPiperTTS(PiperTTS):

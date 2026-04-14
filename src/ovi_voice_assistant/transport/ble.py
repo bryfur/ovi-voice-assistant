@@ -96,7 +96,7 @@ class BLETransport(DeviceTransport):
             self._reconnect_task.cancel()
             try:
                 await self._reconnect_task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError, Exception:
                 pass
             self._reconnect_task = None
 

@@ -1,7 +1,13 @@
 """Configuration for the voice assistant."""
 
+from pathlib import Path
+
 from pydantic import BaseModel
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict, YamlConfigSettingsSource
+
+CONFIG_DIR = Path.home() / ".ovi"
+CONFIG_PATH = CONFIG_DIR / "config.yaml"
+CACHE_DIR = Path.home() / ".cache" / "ovi"
 
 
 class DeviceConfig(BaseModel):
@@ -33,39 +39,14 @@ def parse_devices(raw: str) -> list[DeviceConfig]:
     return devices
 
 
-class Settings(BaseSettings):
-    model_config = {"env_prefix": "OVI_", "env_file": ".env"}
+# ── Nested config sections ───────────────────────────────────
 
-    # Devices — comma-separated: host[:port[:key]]
-    devices: str = ""
 
-    # Transport and codec
-    transport: str = "wifi"  # "wifi" or "ble"
-    codec: str = "lc3"  # "pcm", "lc3", "opus"
-    speaker_sample_rate: int = 0  # 0 = TTS native rate
-
-    # Provider selection
-    stt_provider: str = "whisper"
-    tts_provider: str = "kokoro"
-
-    # STT (faster-whisper)
-    stt_model: str = "base.en"
-    stt_device: str = "cpu"  # "cpu" or "cuda"
-    stt_language: str = "en"
-    stt_beam_size: int = 1
-    stt_compute_type: str = "int8"
-
-    # TTS
-    tts_model: str = "af_heart"
-    tts_speaker_id: int | None = None
-    tts_length_scale: float = 1.0
-    tts_sentence_silence: float = 0.1
-
-    # Agent (OpenAI Agents SDK)
-    openai_api_key: str = ""
-    openai_base_url: str = ""
-    agent_model: str = "gpt-4o-mini"
-    agent_instructions: str = (
+class LlmConfig(BaseModel):
+    api_key: str = ""
+    base_url: str = ""
+    model: str = "gpt-4o-mini"
+    instructions: str = (
         "You are a voice assistant. Your responses will be spoken aloud. "
         "Rules: Reply in 1-2 short sentences if possible. Never explain your reasoning. "
         "Never use markdown, bullet points, or lists. Never include internal thoughts. "
@@ -73,32 +54,94 @@ class Settings(BaseSettings):
         "If your response asks a question or requires a follow-up from the user, "
         "end your response with [LISTEN]. Only use [LISTEN] when you need the user to respond."
     )
-
-    # MCP tool servers — JSON list or @path/to/file.json
-    # e.g. '[{"command": "npx", "args": ["-y", "@dangahagan/weather-mcp"]}]'
     mcp_servers: str = ""
-
-    # Sub-agents — JSON list or @path/to/file.json
-    # Each entry: {name, description, instructions, mcp_servers: [{command, args}]}
     agents: str = ""
 
-    # Mic audio format (from Voice PE: 16-bit PCM, 16kHz, mono)
-    mic_sample_rate: int = 16000
-    mic_sample_width: int = 2  # bytes (16-bit)
-    mic_channels: int = 1
 
-    # BLE settings
-    ble_device_name: str | None = None
-    ble_device_address: str | None = None
+class SttConfig(BaseModel):
+    provider: str = "nemotron"
+    model: str = "int8-dynamic"
+    device: str = "cpu"  # "cpu" or "cuda"
+    language: str = "en"
+    beam_size: int = 1
+    compute_type: str = "int8"
 
-    # Memory — persistent fact extraction and recall (SQLite + embeddings)
-    memory_enabled: bool = True
-    memory_db_path: str = "~/.config/ovi/memory.db"
-    memory_embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
-    memory_bank_id: str = "voice-assistant"
 
-    # Automations — persistent cron-based proactive announcements
-    automations_path: str = "~/.config/ovi/automations.json"
+class TtsConfig(BaseModel):
+    provider: str = "kokoro"
+    model: str = "af_heart"
+    speaker_id: int | None = None
+    length_scale: float = 1.0
+    sentence_silence: float = 0.1
+
+
+class TransportConfig(BaseModel):
+    type: str = "wifi"  # "wifi" or "ble"
+    codec: str = "lc3"  # "pcm", "lc3", "opus"
+    speaker_sample_rate: int = 0  # 0 = TTS native rate
+
+
+class MicConfig(BaseModel):
+    sample_rate: int = 16000
+    sample_width: int = 2  # bytes (16-bit)
+    channels: int = 1
+
+
+class BleConfig(BaseModel):
+    device_name: str | None = None
+    device_address: str | None = None
+
+
+class MemoryConfig(BaseModel):
+    enabled: bool = True
+    db_path: str = "~/.ovi/memory.db"
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    bank_id: str = "voice-assistant"
+
+
+class AutomationsConfig(BaseModel):
+    path: str = "~/.ovi/automations.json"
+
+
+# ── Main settings ────────────────────────────────────────────
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="OVI_",
+        env_file=".env",
+        env_nested_delimiter="__",
+    )
+
+    llm: LlmConfig = LlmConfig()
+    stt: SttConfig = SttConfig()
+    tts: TtsConfig = TtsConfig()
+    transport: TransportConfig = TransportConfig()
+    mic: MicConfig = MicConfig()
+    ble: BleConfig = BleConfig()
+    memory: MemoryConfig = MemoryConfig()
+    automations: AutomationsConfig = AutomationsConfig()
+
+    # Devices — comma-separated: host[:port[:key]]
+    devices: str = ""
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings,
+        env_settings,
+        dotenv_settings,
+        file_secret_settings,
+    ):
+        # Priority (highest to lowest): init kwargs > env vars > .env > yaml > defaults
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            YamlConfigSettingsSource(settings_cls, yaml_file=CONFIG_PATH),
+            file_secret_settings,
+        )
 
     def get_devices(self) -> list[DeviceConfig]:
         return parse_devices(self.devices) if self.devices else []

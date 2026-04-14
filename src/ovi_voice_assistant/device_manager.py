@@ -44,7 +44,7 @@ class DeviceManager:
 
         # Shared music group for synchronized multi-device playback.
         # Created here so all devices share the same player/queue.
-        music_codec = create_codec(settings.codec, 48000, channels=2)
+        music_codec = create_codec(settings.transport.codec, 48000, channels=2)
         self._music_group = MusicGroup(
             sample_rate=music_codec.sample_rate, channels=music_codec.channels
         )
@@ -54,7 +54,7 @@ class DeviceManager:
 
         for device in devices:
             transport = WiFiTransport(device.host, device.port, device.encryption_key)
-            codec = create_codec(settings.codec, tts_rate)
+            codec = create_codec(settings.transport.codec, tts_rate)
             self._connections.append(
                 DeviceConnection(
                     transport,

@@ -9,8 +9,9 @@ from ovi_voice_assistant.device_manager import DeviceManager, _WakeCandidate
 
 
 @pytest.fixture
-def settings():
-    return Settings(_env_file=None, devices="", openai_api_key="test-key")
+def settings(tmp_path):
+    with patch("ovi_voice_assistant.config.CONFIG_PATH", tmp_path / "c.yaml"):
+        return Settings(_env_file=None, devices="")
 
 
 def _make_mock_connection(name="device"):

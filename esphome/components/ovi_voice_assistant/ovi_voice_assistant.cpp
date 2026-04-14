@@ -944,8 +944,8 @@ void OVIVoiceAssistant::request_stop() {
 // State management
 // ---------------------------------------------------------------------------
 
-void OVIVoiceAssistant::set_ovi_state_(OVAState state) {
-  OVAState old = this->ovi_state_;
+void OVIVoiceAssistant::set_ovi_state_(OVIState state) {
+  OVIState old = this->ovi_state_;
   this->ovi_state_ = state;
   ESP_LOGD(TAG, "Ovi State: %d -> %d", old, state);
 }
