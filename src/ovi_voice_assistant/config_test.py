@@ -144,9 +144,9 @@ class TestSettingsDefaults:
         assert s.transport.type == "wifi"
         assert s.transport.codec == "lc3"
         assert s.transport.speaker_sample_rate == 0
-        assert s.stt.provider == "whisper"
+        assert s.stt.provider == "nemotron"
         assert s.tts.provider == "kokoro"
-        assert s.stt.model == "base.en"
+        assert s.stt.model == "int8-dynamic"
         assert s.stt.device == "cpu"
         assert s.stt.language == "en"
         assert s.stt.beam_size == 1

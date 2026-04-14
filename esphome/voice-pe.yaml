@@ -5,16 +5,13 @@
 #
 # Usage:
 #   1. Install ESPHome: pip install esphome
-#   2. Create esphome/secrets.yaml with wifi_ssid and wifi_password
-#   3. Flash: esphome run esphome/voice-pe.yaml
+#   2. Flash: ovi --flash (or: esphome run esphome/voice-pe.yaml)
 #   4. Start the server: ovi <device-ip>
 
 substitutions:
-  wifi_ssid: !secret "wifi_ssid"
+  wifi_ssid: !secret wifi_ssid
   wifi_password: !secret wifi_password
-  # Optional: set an encryption key for secure API communication.
-  # Generate: python -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
-  # Pass the same key to `ovi` CLI as the encryption_key parameter.
+  api_encryption_key: !secret api_encryption_key
 
   # Voice assistant phase IDs (matches official firmware)
   voice_assist_idle_phase_id: "1"
@@ -80,14 +77,13 @@ psram:
   speed: 80MHz
 
 logger:
-  level: DEBUG
+  level: INFO
 
 api:
   id: api_id
   reboot_timeout: 0s
-  # To enable encryption, uncomment and set the key:
   encryption:
-    key: !secret api_encryption_key
+    key: "${api_encryption_key}"
 
 ota:
   - platform: esphome

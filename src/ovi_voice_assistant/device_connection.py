@@ -76,10 +76,16 @@ class _EncodingOutput(PipelineOutput):
             await self._transport.send_audio(encoded)
 
             # Pace to real-time, but stay LEAD_TIME ahead so the device
-            # buffer can absorb network jitter
-            ahead = (self._frame_count * self._frame_duration) - (
-                loop.time() - self._t0
-            )
+            # buffer can absorb network jitter.
+            elapsed = loop.time() - self._t0
+            ahead = (self._frame_count * self._frame_duration) - elapsed
+            if ahead < 0:
+                # Synthesis took longer than real-time — re-anchor the
+                # clock so we don't burst all buffered frames at once.
+                self._t0 = loop.time() - (
+                    self._frame_count * self._frame_duration
+                )
+                ahead = 0.0
             if ahead > self.LEAD_TIME:
                 await asyncio.sleep(ahead - self.LEAD_TIME)
 

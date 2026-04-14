@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict, YamlConfigSettingsSource
 
 CONFIG_DIR = Path.home() / ".ovi"
@@ -122,8 +122,15 @@ class Settings(BaseSettings):
     memory: MemoryConfig = MemoryConfig()
     automations: AutomationsConfig = AutomationsConfig()
 
-    # Devices — comma-separated: host[:port[:key]]
+    # Devices — comma-separated string or YAML list: host[:port[:key]]
     devices: str = ""
+
+    @field_validator("devices", mode="before")
+    @classmethod
+    def _coerce_devices(cls, v):
+        if isinstance(v, list):
+            return ",".join(str(item) for item in v)
+        return v
 
     @classmethod
     def settings_customise_sources(

@@ -21,6 +21,7 @@ async def say(ctx: RunContextWrapper[AssistantContext], text: str) -> str:
     Args:
         text: The message to speak immediately.
     """
+    print(f"[SAY] {text}")  # For debugging and testing without TTS
     if ctx.context.say:
         await ctx.context.say(text)
         return "Spoken."

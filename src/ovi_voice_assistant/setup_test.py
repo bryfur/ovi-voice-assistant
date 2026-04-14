@@ -88,7 +88,7 @@ class TestRunSetupFresh:
             "",  # Base URL
             "gpt-4o-mini",  # Agent model
             "whisper",  # STT provider
-            "2",  # _pick: Whisper model (base.en)
+            "3",  # _pick: Whisper model (base.en)
             "cpu",  # STT device
             "kokoro",  # TTS provider
             "",  # _pick: Kokoro voice (af_heart default)
@@ -96,6 +96,7 @@ class TestRunSetupFresh:
             "",  # _pick: Codec (lc3 default)
         ]
         confirms = [
+            False,  # Don't flash
             False,  # Don't scan
             True,  # Save
         ]
@@ -135,6 +136,7 @@ class TestRunSetupEdit:
             "",  # _pick: Codec (opus from existing)
         ]
         confirms = [
+            False,  # Don't flash
             False,  # Don't scan
             True,  # Save
         ]

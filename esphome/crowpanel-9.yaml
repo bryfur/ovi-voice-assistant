@@ -18,13 +18,13 @@
 #
 # Usage:
 #   1. Install ESPHome: pip install esphome   (or `uv sync --group dev`)
-#   2. Create esphome/secrets.yaml with wifi_ssid, wifi_password, api_encryption_key
-#   3. Flash over USB: esphome run esphome/crowpanel-9.yaml
+#   2. Flash: ovi --flash (or: esphome run esphome/crowpanel-9.yaml)
 #   4. Start the server: ovi crowpanel-9-XXXX.local
 
 substitutions:
   wifi_ssid: !secret wifi_ssid
   wifi_password: !secret wifi_password
+  api_encryption_key: !secret api_encryption_key
 
   voice_assist_idle_phase_id: "1"
   voice_assist_waiting_for_command_phase_id: "2"
@@ -94,7 +94,7 @@ api:
   id: api_id
   reboot_timeout: 0s
   encryption:
-    key: !secret api_encryption_key
+    key: "${api_encryption_key}"
 
 ota:
   - platform: esphome

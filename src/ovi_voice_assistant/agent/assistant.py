@@ -209,7 +209,6 @@ class Assistant:
             if not result.results:
                 return text
             facts = "\n".join(f"- {f.text}" for f in result.results)
-            print(facts)
 
             logger.debug("Injected %d memories", len(result.results))
             return f"[Relevant memories]\n{facts}\n\n[User]\n{text}"

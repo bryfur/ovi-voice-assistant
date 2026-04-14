@@ -20,6 +20,7 @@ click.rich_click.GROUP_ARGUMENTS_OPTIONS = True
 @click.option("--scan", is_flag=True, help="Scan for ESPHome devices on the network.")
 @click.option("--gen-key", is_flag=True, help="Generate an encryption key and exit.")
 @click.option("--setup", is_flag=True, help="Run the interactive setup wizard.")
+@click.option("--flash", is_flag=True, help="Flash ESPHome firmware to a device.")
 @click.option("--stt-provider", default=None, help="STT provider (whisper).")
 @click.option("--tts-provider", default=None, help="TTS provider (kokoro, piper).")
 @click.option("--stt-model", default=None, help="STT model name.")
@@ -49,6 +50,7 @@ def main(
     scan,
     gen_key,
     setup,
+    flash,
     stt_provider,
     tts_provider,
     stt_model,
@@ -82,6 +84,13 @@ def main(
     # Scan mode — just discover and print devices
     if scan:
         asyncio.run(_scan())
+        return
+
+    # Flash mode — compile and upload ESPHome firmware
+    if flash:
+        from ovi_voice_assistant.flash import run_flash
+
+        run_flash()
         return
 
     # Setup wizard — run explicitly or on first start
@@ -235,6 +244,9 @@ def _resolve_devices(
 
 async def _scan() -> None:
     """Discover ESPHome devices on the local network."""
+    import yaml
+
+    from ovi_voice_assistant.config import CONFIG_PATH
     from ovi_voice_assistant.discovery import discover_devices
 
     click.echo("Scanning for ESPHome devices (5s)...")
@@ -246,11 +258,56 @@ async def _scan() -> None:
         )
         return
 
+    # Load existing config to show which devices are already added
+    existing_hosts: list[str] = []
+    if CONFIG_PATH.exists():
+        with open(CONFIG_PATH) as f:
+            cfg = yaml.safe_load(f) or {}
+        raw = cfg.get("devices", [])
+        if isinstance(raw, list):
+            existing_hosts = raw
+        elif isinstance(raw, str):
+            existing_hosts = [d.strip() for d in raw.split(",") if d.strip()]
+
     click.echo(f"\nFound {len(devices)} device(s):\n")
-    click.echo(f"  {'Name':<30} {'IP':<18} {'Port'}")
-    click.echo(f"  {'─' * 30} {'─' * 18} {'─' * 5}")
-    for d in devices:
-        click.echo(f"  {d['name']:<30} {d['ip']:<18} {d['port']}")
+    for i, d in enumerate(devices, 1):
+        tag = " (configured)" if d["host"] in existing_hosts else ""
+        click.echo(f"  {i}. {d['name']:<28} {d['ip']:<18} {d['port']}{tag}")
+
+    # Offer to add devices to config
+    new_devices = [d for d in devices if d["host"] not in existing_hosts]
+    if new_devices and sys.stdin.isatty():
+        click.echo()
+        sel = click.prompt(
+            "Add devices to config (comma-separated numbers, 'all', or Enter to skip)",
+            default="",
+            show_default=False,
+        )
+        if sel.strip():
+            if sel.strip().lower() == "all":
+                hosts_to_add = [d["host"] for d in new_devices]
+            else:
+                indices = []
+                for s in sel.split(","):
+                    try:
+                        idx = int(s.strip()) - 1
+                        if (
+                            0 <= idx < len(devices)
+                            and devices[idx]["host"] not in existing_hosts
+                        ):
+                            indices.append(idx)
+                    except ValueError:
+                        pass
+                hosts_to_add = [devices[i]["host"] for i in indices]
+
+            if hosts_to_add:
+                from ovi_voice_assistant.setup import add_devices_to_config
+
+                add_devices_to_config(hosts_to_add)
+                for h in hosts_to_add:
+                    click.echo(f"  Added {h}")
+                click.echo(f"\nConfiguration saved to {CONFIG_PATH}")
+                return
 
     click.echo("\nConnect with:")
     for d in devices:

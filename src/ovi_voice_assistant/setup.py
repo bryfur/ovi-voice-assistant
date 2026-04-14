@@ -66,8 +66,17 @@ def _pick(label: str, options: dict[str, str], default: str) -> str:
         marker = " [dim](default)[/dim]" if key == default else ""
         console.print(f"    [cyan]{i}.[/cyan] {key} — [dim]{desc}[/dim]{marker}")
 
+    # Find the default's number for the prompt hint
+    default_num = next(
+        (i for i, (key, _) in enumerate(items, 1) if key == default), None
+    )
+
     while True:
-        raw = click.prompt("  Choice", default="", show_default=False)
+        raw = click.prompt(
+            "  Choice",
+            default=str(default_num) if default_num else "",
+            show_default=bool(default_num),
+        )
         if not raw:
             return default
         try:
@@ -265,6 +274,12 @@ def run_setup() -> dict:
     console.rule("[bold]Devices[/bold]")
     console.print("  Connect to ESPHome devices running the Ovi component.\n")
 
+    if click.confirm("  Flash firmware to a new device?", default=not is_edit):
+        from ovi_voice_assistant.flash import run_flash
+
+        run_flash()
+        console.print()
+
     existing_devices_raw = _get(existing, "devices")
     if isinstance(existing_devices_raw, list):
         current_devices = existing_devices_raw
@@ -356,6 +371,57 @@ def save_config(config: dict, path: Path | None = None) -> None:
         lines.append("")
 
     path.write_text("\n".join(lines) + "\n")
+
+
+def _read_encryption_key() -> str | None:
+    """Read the API encryption key from esphome/secrets.yaml."""
+    secrets_path = Path("esphome/secrets.yaml")
+    if not secrets_path.exists():
+        return None
+    for line in secrets_path.read_text().splitlines():
+        if line.startswith("api_encryption_key:"):
+            val = line.split(":", 1)[1].strip().strip('"').strip("'")
+            return val if val else None
+    return None
+
+
+def add_devices_to_config(entries: list[str], path: Path | None = None) -> None:
+    """Add device entries to the config file without touching other settings.
+
+    Each entry is a ``host[:port[:key]]`` string. Bare hostnames get the
+    encryption key from esphome/secrets.yaml automatically.
+    """
+    path = path or CONFIG_PATH
+
+    existing: dict = {}
+    if path.exists():
+        with open(path) as f:
+            existing = yaml.safe_load(f) or {}
+
+    raw = existing.get("devices", [])
+    if isinstance(raw, str):
+        current = [d.strip() for d in raw.split(",") if d.strip()]
+    elif isinstance(raw, list):
+        current = [str(d).strip() for d in raw if str(d).strip()]
+    else:
+        current = []
+
+    # Auto-attach encryption key to bare hostnames
+    key = _read_encryption_key()
+    resolved = []
+    for entry in entries:
+        if ":" not in entry and key:
+            entry = f"{entry}:6055:{key}"
+        resolved.append(entry)
+
+    # Extract just the host part for dedup (entry may be host:port:key)
+    current_hosts = {e.split(":")[0] for e in current}
+    for entry in resolved:
+        if entry.split(":")[0] not in current_hosts:
+            current.append(entry)
+
+    existing["devices"] = current
+    save_config(existing, path=path)
 
 
 def needs_setup() -> bool:
