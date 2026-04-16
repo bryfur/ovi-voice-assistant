@@ -131,7 +131,7 @@ class MusicGroup:
 
         # Reset all outputs
         for out in self._outputs:
-            out.reset()
+            await out.reset()
 
         # Send TTS_START (which also sends AUDIO_CONFIG) to all devices
         await fanout.send_event(EventType.TTS_START)

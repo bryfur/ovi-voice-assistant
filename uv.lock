@@ -962,11 +962,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/0d/55/0bfcb4aa50033c89e5ac132af3d07fac0543824ce6eaefd4d1bfdcc3795b/kokoro_onnx-0.5.0-py3-none-any.whl", hash = "sha256:4e1c38a296db5dbc1f722f69f5e3c13f2e2877b3e5b145287f56ec057013e357", size = 17448, upload-time = "2026-01-30T03:05:46.931Z" },
 ]
 
-[package.optional-dependencies]
-gpu = [
-    { name = "onnxruntime-gpu", marker = "platform_machine == 'x86_64' and sys_platform != 'darwin'" },
-]
-
 [[package]]
 name = "language-tags"
 version = "1.2.0"
@@ -1203,23 +1198,6 @@ wheels = [
 ]
 
 [[package]]
-name = "onnxruntime-gpu"
-version = "1.24.4"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "flatbuffers" },
-    { name = "numpy" },
-    { name = "packaging" },
-    { name = "protobuf" },
-    { name = "sympy" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3e/5b/82b27f766b64f97c9a98b772dc07b608e900bd2faafdfa176b86d20be7f8/onnxruntime_gpu-1.24.4-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:af9dd7ef92d94c75e5523cf070e180f3d8cdbb2fc007dcea97ba71b03e3b96d6", size = 252765395, upload-time = "2026-03-17T22:04:37.305Z" },
-    { url = "https://files.pythonhosted.org/packages/5d/95/fa8c48e03790c979167d08164b34a8442c7074bca4c7253b4455497025de/onnxruntime_gpu-1.24.4-cp314-cp314-win_amd64.whl", hash = "sha256:4dde3d2f1039060c42b12fd446fc0da5b836cc65dceb4020ca60a04cffa1d90d", size = 209597109, upload-time = "2026-03-17T21:58:58.136Z" },
-    { url = "https://files.pythonhosted.org/packages/1a/98/7707edefcecf69d6c45b83a83f13ac58257017b4eaf58772668d302f849f/onnxruntime_gpu-1.24.4-cp314-cp314t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:097c6f53e99ee35f21d0fdba76ca283b92465a0e364c6f0209cb9653c424e2a4", size = 252776951, upload-time = "2026-03-17T22:04:49.715Z" },
-]
-
-[[package]]
 name = "openai"
 version = "2.30.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1272,10 +1250,10 @@ dependencies = [
     { name = "bleak" },
     { name = "fastembed" },
     { name = "faster-whisper" },
-    { name = "kokoro-onnx", extra = ["gpu"] },
+    { name = "kokoro-onnx" },
     { name = "lc3py" },
     { name = "numpy" },
-    { name = "onnxruntime-gpu" },
+    { name = "onnxruntime" },
     { name = "openai-agents" },
     { name = "opuslib" },
     { name = "playwright" },
@@ -1308,10 +1286,10 @@ requires-dist = [
     { name = "bleak", specifier = ">=0.22.0" },
     { name = "fastembed", specifier = ">=0.6.0" },
     { name = "faster-whisper", specifier = "==1.2.1" },
-    { name = "kokoro-onnx", extras = ["gpu"], specifier = ">=0.5.0" },
+    { name = "kokoro-onnx", specifier = ">=0.5.0" },
     { name = "lc3py", specifier = ">=1.1.0" },
     { name = "numpy", specifier = "==2.4.4" },
-    { name = "onnxruntime-gpu", specifier = ">=1.18.0" },
+    { name = "onnxruntime", specifier = ">=1.18.0" },
     { name = "openai-agents", specifier = "==0.13.4" },
     { name = "opuslib", specifier = ">=3.0.1" },
     { name = "piper-tts", marker = "extra == 'piper'", specifier = "==1.4.2" },

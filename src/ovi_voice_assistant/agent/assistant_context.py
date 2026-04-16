@@ -46,19 +46,6 @@ class AssistantContext:
     _timers: dict[str, tuple[asyncio.TimerHandle, float]] = field(default_factory=dict)
     """Maps label → (handle, fire_time) where fire_time is loop.time() epoch."""
 
-    _pending_say: asyncio.Task | None = field(default=None, init=False, repr=False)
-    """Background task for in-flight say() audio."""
-
-    async def drain_say(self) -> None:
-        """Wait for any in-flight say() audio to finish."""
-        task = self._pending_say
-        self._pending_say = None
-        if task is not None and not task.done():
-            try:
-                await task
-            except Exception:
-                logger.debug("say() task failed", exc_info=True)
-
     def schedule_timer(self, seconds: float, label: str) -> None:
         """Schedule a timer that announces on the device when it fires."""
         loop = asyncio.get_running_loop()

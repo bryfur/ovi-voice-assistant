@@ -8,6 +8,7 @@ are all implemented in numpy + onnxruntime.
 
 import asyncio
 import logging
+import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -73,9 +74,6 @@ class NemotronSTT(STT):
         self._hann: np.ndarray | None = None
         self._tokens: list[str] | None = None
         self._vad_model = None
-        # Pre-allocated decoder input arrays (mutated in-place in hot loop)
-        self._dec_targets = np.zeros((1, 1), dtype=np.int32)
-        self._dec_target_len = np.array([1], dtype=np.int32)
 
     # ── load ─────────────────────────────────────────────────────
 
@@ -100,20 +98,21 @@ class NemotronSTT(STT):
         fb_path = hf_hub_download(HF_REPO, "shared/filterbank.bin", cache_dir=cd)
         tok_path = hf_hub_download(HF_REPO, "shared/tokens.txt", cache_dir=cd)
 
-        opts = ort.SessionOptions()
-        opts.log_severity_level = 3
-        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        opts.inter_op_num_threads = 1
-        opts.intra_op_num_threads = 4
-        providers = ["CPUExecutionProvider"]
-        if self._settings.stt.device == "cuda":
-            providers.insert(0, "CUDAExecutionProvider")
+        providers = self._select_providers()
+        enc_opts = self._make_session_options(is_decoder=False)
+        dec_opts = self._make_session_options(is_decoder=True)
 
         self._encoder = ort.InferenceSession(
-            enc_path, sess_options=opts, providers=providers
+            enc_path, sess_options=enc_opts, providers=providers
         )
         self._decoder = ort.InferenceSession(
-            dec_path, sess_options=opts, providers=providers
+            dec_path, sess_options=dec_opts, providers=providers
+        )
+        logger.info(
+            "Nemotron ORT providers=%s, encoder threads=%d, decoder threads=%d",
+            self._encoder.get_providers(),
+            enc_opts.intra_op_num_threads,
+            dec_opts.intra_op_num_threads,
         )
         self._enc_in = [i.name for i in self._encoder.get_inputs()]
         self._dec_in = [i.name for i in self._decoder.get_inputs()]
@@ -143,6 +142,33 @@ class NemotronSTT(STT):
 
         self._vad_model = get_vad_model()
         logger.info("Nemotron STT ready (Silero VAD)")
+
+    def _select_providers(self) -> list[str]:
+        available = set(ort.get_available_providers())
+        if self._settings.stt.device == "cuda" and "CUDAExecutionProvider" in available:
+            return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        preferred = [
+            "CoreMLExecutionProvider",
+            "DmlExecutionProvider",
+            "CPUExecutionProvider",
+        ]
+        return [p for p in preferred if p in available] or ["CPUExecutionProvider"]
+
+    def _make_session_options(self, is_decoder: bool) -> ort.SessionOptions:
+        """Build ORT session options tuned for encoder vs decoder workloads.
+
+        Encoder: large per-call matmuls that parallelize well → use most cores.
+        Decoder: tiny per-token ops called in a tight loop → threading overhead
+        outweighs gains; keep intra-op threads low.
+        """
+        opts = ort.SessionOptions()
+        opts.log_severity_level = 3
+        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        opts.inter_op_num_threads = 1
+        total = os.cpu_count() or 4
+        opts.intra_op_num_threads = 2 if is_decoder else max(1, min(8, total // 2))
+        return opts
 
     # ── mel spectrogram ──────────────────────────────────────────
 
@@ -188,6 +214,11 @@ class NemotronSTT(STT):
         """
         en, dn = self._enc_in, self._dec_in
 
+        # Per-call decoder input buffers — local so concurrent transcribes
+        # on the same STT instance don't race on shared state.
+        tgt = np.zeros((1, 1), dtype=np.int32)
+        tgt_len = np.array([1], dtype=np.int32)
+
         while cursor + MEL_SHIFT <= mel.shape[1]:
             mc = mel[:, cursor : cursor + MEL_SHIFT]
             ei = np.concatenate([pre_cache, mc], axis=1)
@@ -208,10 +239,6 @@ class NemotronSTT(STT):
             pre_cache = (
                 mc[:, -PRE_ENCODE_CACHE:] if mc.shape[1] >= PRE_ENCODE_CACHE else mc
             )
-
-            # Pre-allocated target array — mutate in place to avoid allocs
-            tgt = self._dec_targets
-            tgt_len = self._dec_target_len
 
             for t in range(enc_len):
                 ef = enc_out[:, :, t : t + 1]

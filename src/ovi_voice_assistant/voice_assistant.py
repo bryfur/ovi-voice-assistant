@@ -8,6 +8,7 @@ from ovi_voice_assistant.agent.assistant import Assistant
 from ovi_voice_assistant.agent.assistant_context import AssistantContext
 from ovi_voice_assistant.config import Settings
 from ovi_voice_assistant.pipeline_output import PipelineOutput
+from ovi_voice_assistant.speech_queue import SpeechQueue
 from ovi_voice_assistant.stt import STT
 from ovi_voice_assistant.transport import EventType
 from ovi_voice_assistant.tts import TTS
@@ -63,7 +64,6 @@ class VoiceAssistant:
         self.stt: STT = _create_stt(settings)
         self.tts: TTS = _create_tts(settings, sample_rate=tts_sample_rate)
         self.agent = Assistant(settings)
-        self._lock = asyncio.Lock()
         self._last_response = ""
         self._bg_tasks: set[asyncio.Task] = set()
 
@@ -86,16 +86,17 @@ class VoiceAssistant:
         context: AssistantContext | None = None,
     ) -> bool:
         """Run the full pipeline. Returns True if follow-up requested."""
+        speech = SpeechQueue(self.tts, output)
         try:
             transcript = await self._run_stt(output, audio_iter)
             if not transcript:
                 return False
 
             if context:
-                context.say = self._make_say_callback(output, context)
+                context.say = self._make_say_callback(speech)
 
             agent_tokens = self.agent.run_streamed(transcript, context=context)
-            needs_followup = await self._stream_tts(output, agent_tokens, context)
+            needs_followup = await self._stream_tts(output, speech, agent_tokens)
 
             if needs_followup:
                 await output.send_event(EventType.CONTINUE)
@@ -125,44 +126,34 @@ class VoiceAssistant:
             except Exception:
                 pass
             return False
+        finally:
+            await speech.stop()
 
     async def announce(self, output: PipelineOutput, text: str) -> None:
         """Play a TTS announcement."""
+        speech = SpeechQueue(self.tts, output)
         try:
             await output.send_event(EventType.TTS_START)
-
-            async def text_tokens():
-                yield text
-
-            async for pcm_chunk in self.tts.synthesize_stream(text_tokens()):
-                await output.send_audio(pcm_chunk)
-
+            await speech.submit(text)
             await output.send_event(EventType.TTS_END)
-            logger.info("Announcement: %r", text[:60])
+            logger.info("Announcement complete: %r", text[:60])
         except asyncio.CancelledError:
             logger.debug("Announcement cancelled")
         except Exception:
             logger.exception("Announcement error")
+        finally:
+            await speech.stop()
 
-    def _make_say_callback(self, output: PipelineOutput, context: AssistantContext):
-        """Create a fire-and-forget callback that speaks text inline.
+    def _make_say_callback(self, speech: SpeechQueue):
+        """Create a callback that enqueues text for playback and returns at once.
 
-        The say audio runs as a background task so the agent can continue
-        calling tools while it plays.  ``drain_say()`` on the context
-        ensures it finishes before the response TTS starts.
+        The SpeechQueue serializes say utterances with response TTS, so the
+        agent's say call is fire-and-forget without risk of overlapping the
+        main response audio on the device.
         """
 
-        async def _speak(text: str) -> None:
-            async def tokens():
-                yield text
-
-            async for pcm_chunk in self.tts.synthesize_stream(tokens()):
-                await output.send_audio(pcm_chunk)
-
         async def _say(text: str) -> None:
-            # Wait for any previous say to finish (no overlap)
-            await context.drain_say()
-            context._pending_say = asyncio.create_task(_speak(text))
+            speech.submit(text)
 
         return _say
 
@@ -174,10 +165,9 @@ class VoiceAssistant:
         async def on_vad_start():
             await output.send_event(EventType.VAD_START)
 
-        async with self._lock:
-            transcript = await self.stt.transcribe_stream(
-                audio_iter, on_vad_start=on_vad_start
-            )
+        transcript = await self.stt.transcribe_stream(
+            audio_iter, on_vad_start=on_vad_start
+        )
 
         await output.send_event(EventType.MIC_STOP)
 
@@ -192,8 +182,8 @@ class VoiceAssistant:
     async def _stream_tts(
         self,
         output: PipelineOutput,
+        speech: SpeechQueue,
         agent_tokens: AsyncIterator[str],
-        context: AssistantContext | None = None,
     ) -> bool:
         follow_up = False
         full_text = ""
@@ -207,19 +197,9 @@ class VoiceAssistant:
                 follow_up = True
 
         await output.send_event(EventType.TTS_START)
-
-        drained = False
-        async for pcm_chunk in self.tts.synthesize_stream(filtered_tokens()):
-            if not drained and context:
-                await context.drain_say()
-                drained = True
-            await output.send_audio(pcm_chunk)
-
-        # Drain even if agent produced no response audio
-        if not drained and context:
-            await context.drain_say()
-
+        await speech.submit_stream(filtered_tokens())
         await output.send_event(EventType.TTS_END)
+        logger.info("Speaking complete: %r", full_text[:80])
         self._last_response = full_text
         return follow_up
 

@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from agents import Agent, RunConfig, Runner, SQLiteSession
 from agents.mcp import MCPServerStdio
 from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
+from agents.models.openai_responses import OpenAIResponsesModel
 from agents.stream_events import RawResponsesStreamEvent
 from openai import AsyncOpenAI
 from openai.types.responses import ResponseTextDeltaEvent
@@ -30,12 +31,12 @@ class Assistant:
         self._session: SQLiteSession | None = None
         self._mcp_servers: list[MCPServerStdio] = []
 
-    def _build_model(self) -> OpenAIChatCompletionsModel:
+    def _build_model(self) -> OpenAIResponsesModel:
         client = AsyncOpenAI(
             base_url=self._settings.llm.base_url or "https://api.openai.com/v1",
             api_key=self._settings.llm.api_key or "not-set",
         )
-        return OpenAIChatCompletionsModel(
+        return OpenAIResponsesModel(
             model=self._settings.llm.model,
             openai_client=client,
         )
@@ -65,7 +66,7 @@ class Assistant:
         return servers
 
     def _parse_agents(
-        self, model: OpenAIChatCompletionsModel
+        self, model: OpenAIResponsesModel
     ) -> list[tuple[Agent, list[MCPServerStdio], str]]:
         """Parse sub-agent definitions from config."""
         raw = self._settings.llm.agents.strip()

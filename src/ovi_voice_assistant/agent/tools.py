@@ -10,7 +10,7 @@ from agents import RunContextWrapper, function_tool
 from ovi_voice_assistant.agent.assistant_context import AssistantContext
 
 
-@function_tool
+@function_tool(is_enabled=False)
 async def say(ctx: RunContextWrapper[AssistantContext], text: str) -> str:
     """Say something to the user right now, then continue working.
 

@@ -1,15 +1,16 @@
 """Streaming text-to-speech using Kokoro 82M (ONNX int8)."""
 
-import asyncio
 import logging
+import os
 import urllib.request
-from collections.abc import AsyncIterator
+from collections.abc import Iterable
 from pathlib import Path
 
 import numpy as np
+import onnxruntime as ort
 
 from ovi_voice_assistant.config import CACHE_DIR, Settings
-from ovi_voice_assistant.tts import resample, split_sentences
+from ovi_voice_assistant.tts import resample
 from ovi_voice_assistant.tts.tts import TTS
 
 logger = logging.getLogger(__name__)
@@ -18,7 +19,7 @@ MODELS_DIR = CACHE_DIR / "kokoro"
 
 _MODEL_URL = (
     "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX"
-    "/resolve/main/onnx/model_quantized.onnx"
+    "/resolve/main/onnx/model_uint8.onnx"
 )
 _VOICES_URL = (
     "https://github.com/thewh1teagle/kokoro-onnx"
@@ -48,22 +49,60 @@ class KokoroTTS(TTS):
     def load(self) -> None:
         from kokoro_onnx import Kokoro
 
-        model_path = self._ensure_file("model_quantized.onnx", _MODEL_URL)
+        model_path = self._ensure_file("model_uint8.onnx", _MODEL_URL)
         voices_path = self._ensure_file("voices-v1.0.bin", _VOICES_URL)
 
         logger.info("Loading Kokoro TTS model")
-        self._kokoro = Kokoro(str(model_path), str(voices_path))
 
-        # Cache expected input types so we can cast correctly
+        sess_options = ort.SessionOptions()
+        sess_options.graph_optimization_level = (
+            ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+        )
+        sess_options.execution_mode = ort.ExecutionMode.ORT_PARALLEL
+        threads = os.cpu_count() or 4
+        sess_options.intra_op_num_threads = threads
+        sess_options.inter_op_num_threads = 1
+
+        providers = self._select_providers()
+        session = ort.InferenceSession(
+            str(model_path), sess_options=sess_options, providers=providers
+        )
+        self._kokoro = Kokoro.from_session(session, str(voices_path))
+
         self._input_dtypes = {
             inp.name: inp.type for inp in self._kokoro.sess.get_inputs()
         }
 
         logger.info(
-            "Kokoro TTS loaded (native %dHz, output %dHz)",
+            "Kokoro TTS loaded (providers=%s, native %dHz, output %dHz)",
+            self._kokoro.sess.get_providers(),
             _NATIVE_RATE,
             self.sample_rate,
         )
+
+        self._warmup()
+
+    @staticmethod
+    def _select_providers() -> list[str]:
+        available = set(ort.get_available_providers())
+        preferred = [
+            "CUDAExecutionProvider",
+            "CoreMLExecutionProvider",
+            "DmlExecutionProvider",
+            "CPUExecutionProvider",
+        ]
+        return [p for p in preferred if p in available] or ["CPUExecutionProvider"]
+
+    def _warmup(self) -> None:
+        assert self._kokoro is not None
+        voice = self._settings.tts.model or "af_heart"
+        lang = "en-gb" if voice.startswith(("bf_", "bm_")) else "en-us"
+        try:
+            phonemes = self._kokoro.tokenizer.phonemize("Hello.", lang)
+            for batch in self._kokoro._split_phonemes(phonemes):
+                self._run_inference(batch, voice, 1.0)
+        except Exception as e:
+            logger.warning("Kokoro warmup failed: %s", e)
 
     @staticmethod
     def _ensure_file(filename: str, url: str) -> Path:
@@ -103,8 +142,13 @@ class KokoroTTS(TTS):
         }
         return self._kokoro.sess.run(None, inputs)[0]
 
-    def synthesize(self, text: str) -> bytes:
-        """Synthesize text to raw 16-bit PCM at self.sample_rate."""
+    def synthesize_iter(self, text: str) -> Iterable[bytes]:
+        """Yield PCM for each phoneme batch as its inference completes.
+
+        Kokoro splits long sentences into ~100-phoneme batches run as
+        separate ORT forward passes. Yielding per batch lets the device
+        start playing batch 1 while batch 2 is still inferring.
+        """
         if self._kokoro is None:
             raise RuntimeError("Call load() first")
 
@@ -112,23 +156,13 @@ class KokoroTTS(TTS):
         lang = "en-gb" if voice.startswith(("bf_", "bm_")) else "en-us"
         phonemes = self._kokoro.tokenizer.phonemize(text, lang)
 
-        audio_parts = []
         for batch in self._kokoro._split_phonemes(phonemes):
-            part = self._run_inference(batch, voice, 1.0)
-            audio_parts.append(part)
+            samples = self._run_inference(batch, voice, 1.0)
+            audio = (samples * 32767).clip(-32768, 32767).astype(np.int16)
+            if self.sample_rate != _NATIVE_RATE:
+                audio = resample(audio, _NATIVE_RATE, self.sample_rate)
+            yield audio.tobytes()
 
-        samples = np.concatenate(audio_parts)
-        audio = (samples * 32767).clip(-32768, 32767).astype(np.int16)
-        if self.sample_rate != _NATIVE_RATE:
-            audio = resample(audio, _NATIVE_RATE, self.sample_rate)
-        return audio.tobytes()
-
-    async def synthesize_stream(
-        self, text_chunks: AsyncIterator[str]
-    ) -> AsyncIterator[bytes]:
-        """Stream TTS: split tokens into sentences, synthesize each eagerly."""
-        loop = asyncio.get_running_loop()
-        async for sentence in split_sentences(text_chunks):
-            logger.debug("TTS synthesizing: %r", sentence[:60])
-            audio = await loop.run_in_executor(None, self.synthesize, sentence)
-            yield audio
+    def synthesize(self, text: str) -> bytes:
+        """Synthesize text to raw 16-bit PCM at self.sample_rate."""
+        return b"".join(self.synthesize_iter(text))

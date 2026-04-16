@@ -1,14 +1,12 @@
 """Streaming text-to-speech using piper."""
 
-import asyncio
 import logging
-from collections.abc import AsyncIterator
 from pathlib import Path
 
 import numpy as np
 
 from ovi_voice_assistant.config import CACHE_DIR, Settings
-from ovi_voice_assistant.tts import resample, split_sentences
+from ovi_voice_assistant.tts import resample
 from ovi_voice_assistant.tts.tts import TTS
 
 logger = logging.getLogger(__name__)
@@ -76,13 +74,3 @@ class PiperTTS(TTS):
             return b""
 
         return np.concatenate(all_audio).tobytes()
-
-    async def synthesize_stream(
-        self, text_chunks: AsyncIterator[str]
-    ) -> AsyncIterator[bytes]:
-        """Stream TTS: split tokens into sentences, synthesize each eagerly."""
-        loop = asyncio.get_running_loop()
-        async for sentence in split_sentences(text_chunks):
-            logger.debug("TTS synthesizing: %r", sentence[:60])
-            audio = await loop.run_in_executor(None, self.synthesize, sentence)
-            yield audio

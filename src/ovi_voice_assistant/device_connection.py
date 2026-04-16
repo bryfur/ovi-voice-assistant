@@ -31,12 +31,15 @@ logger = logging.getLogger(__name__)
 class _EncodingOutput(PipelineOutput):
     """Adapts transport + codec to PipelineOutput.
 
-    The pipeline sends raw PCM; this encodes it with the codec
-    and sends the encoded frames paced to real-time, with a small
-    lead time so the device buffer can absorb network jitter.
+    All traffic to the device — PCM audio *and* control events — flows
+    through a single FIFO queue drained by one worker. The worker paces
+    encoded audio to real-time and inserts events in order with playback,
+    waiting for real-time to catch up before emitting an event so the
+    device doesn't cut off the tail of buffered audio.
     """
 
     LEAD_TIME = 0.3  # seconds — send this much audio ahead of real-time
+    QUEUE_SIZE = 128  # audio frames + events; pacing drives backpressure
 
     def __init__(self, transport: DeviceTransport, codec: AudioCodec) -> None:
         self._transport = transport
@@ -45,60 +48,109 @@ class _EncodingOutput(PipelineOutput):
         self._frame_count = 0
         self._t0 = 0.0
         self._frame_duration = codec.frame_duration_ms / 1000.0
+        self._queue: asyncio.Queue[tuple | None] = asyncio.Queue(
+            maxsize=self.QUEUE_SIZE
+        )
+        self._worker: asyncio.Task | None = None
+
+    def _ensure_worker(self) -> None:
+        if self._worker is None or self._worker.done():
+            self._worker = asyncio.create_task(self._run_loop())
+
+    async def _wait_for_playback_catchup(self, loop: asyncio.AbstractEventLoop) -> None:
+        if self._frame_count > 0:
+            elapsed = loop.time() - self._t0
+            ahead = (self._frame_count * self._frame_duration) - elapsed
+            if ahead > 0:
+                await asyncio.sleep(ahead)
+
+    async def _run_loop(self) -> None:
+        loop = asyncio.get_running_loop()
+        try:
+            while True:
+                item = await self._queue.get()
+                try:
+                    if item is None:
+                        return
+                    kind = item[0]
+                    if kind == "audio":
+                        _, frame = item
+                        encoded = await loop.run_in_executor(
+                            None, self._codec.encode, frame
+                        )
+                        if self._frame_count == 0:
+                            self._t0 = loop.time()
+                        self._frame_count += 1
+                        await self._transport.send_audio(encoded)
+                        elapsed = loop.time() - self._t0
+                        ahead = (self._frame_count * self._frame_duration) - elapsed
+                        if ahead < 0:
+                            self._t0 = loop.time() - (
+                                self._frame_count * self._frame_duration
+                            )
+                            ahead = 0.0
+                        if ahead > self.LEAD_TIME:
+                            await asyncio.sleep(ahead - self.LEAD_TIME)
+                    elif kind == "event":
+                        _, event_type, payload, done = item
+                        try:
+                            await self._wait_for_playback_catchup(loop)
+                            if event_type == EventType.TTS_START:
+                                cfg = struct.pack(
+                                    "<IHBB",
+                                    self._codec.sample_rate,
+                                    self._codec.encoded_frame_bytes,
+                                    self._codec.codec_id,
+                                    self._codec.channels,
+                                )
+                                await self._transport.send_event(
+                                    EventType.AUDIO_CONFIG, cfg
+                                )
+                            await self._transport.send_event(event_type, payload)
+                            if not done.done():
+                                done.set_result(None)
+                        except Exception as e:
+                            if not done.done():
+                                done.set_exception(e)
+                finally:
+                    self._queue.task_done()
+        except asyncio.CancelledError:
+            return
 
     async def send_event(self, event: EventType, payload: bytes = b"") -> None:
-        # Send AUDIO_CONFIG before TTS_START so device configures decoder
-        if event == EventType.TTS_START:
-            config_payload = struct.pack(
-                "<IHBB",
-                self._codec.sample_rate,
-                self._codec.encoded_frame_bytes,
-                self._codec.codec_id,
-                self._codec.channels,
-            )
-            await self._transport.send_event(EventType.AUDIO_CONFIG, config_payload)
-        await self._transport.send_event(event, payload)
+        self._ensure_worker()
+        done: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        await self._queue.put(("event", event, payload, done))
+        await done
 
     async def send_audio(self, pcm: bytes) -> None:
-        """Receive PCM from pipeline, encode with codec, pace to real-time."""
-        loop = asyncio.get_running_loop()
+        self._ensure_worker()
         self._pcm_buf += pcm
         frame_bytes = self._codec.pcm_frame_bytes
         while len(self._pcm_buf) >= frame_bytes:
             frame = self._pcm_buf[:frame_bytes]
             self._pcm_buf = self._pcm_buf[frame_bytes:]
-            encoded = self._codec.encode(frame)
-
-            if self._frame_count == 0:
-                self._t0 = loop.time()
-            self._frame_count += 1
-
-            await self._transport.send_audio(encoded)
-
-            # Pace to real-time, but stay LEAD_TIME ahead so the device
-            # buffer can absorb network jitter.
-            elapsed = loop.time() - self._t0
-            ahead = (self._frame_count * self._frame_duration) - elapsed
-            if ahead < 0:
-                # Synthesis took longer than real-time — re-anchor the
-                # clock so we don't burst all buffered frames at once.
-                self._t0 = loop.time() - (
-                    self._frame_count * self._frame_duration
-                )
-                ahead = 0.0
-            if ahead > self.LEAD_TIME:
-                await asyncio.sleep(ahead - self.LEAD_TIME)
+            await self._queue.put(("audio", frame))
 
     async def flush(self) -> None:
-        """Flush any remaining PCM (pad to full frame)."""
         if self._pcm_buf:
             frame_bytes = self._codec.pcm_frame_bytes
             self._pcm_buf += b"\x00" * (frame_bytes - len(self._pcm_buf))
-            encoded = self._codec.encode(self._pcm_buf)
-            await self._transport.send_audio(encoded)
+            self._ensure_worker()
+            await self._queue.put(("audio", self._pcm_buf))
             self._pcm_buf = b""
+        if self._worker and not self._worker.done():
+            await self._queue.join()
 
-    def reset(self) -> None:
+    async def reset(self) -> None:
+        if self._worker and not self._worker.done():
+            await self._queue.put(None)
+            try:
+                await self._worker
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._worker = None
+        self._queue = asyncio.Queue(maxsize=self.QUEUE_SIZE)
         self._pcm_buf = b""
         self._frame_count = 0
         self._t0 = 0.0
@@ -293,7 +345,7 @@ class DeviceConnection:
     # -- Pipeline execution --
 
     async def _run(self) -> None:
-        self._output.reset()
+        await self._output.reset()
         self._continuing = await self._pipeline.run(
             self._output,
             self._mic_stream(),
@@ -313,7 +365,7 @@ class DeviceConnection:
         """Stream music at 48 kHz via the dedicated music output."""
         player = self._context.music_player
         out = self._music_output
-        out.reset()
+        await out.reset()
         await out.send_event(EventType.TTS_START)
         try:
             await player.stream(out)
@@ -329,7 +381,7 @@ class DeviceConnection:
 
     async def _run_announce(self, text: str) -> None:
         try:
-            self._output.reset()
+            await self._output.reset()
             await self._pipeline.announce(self._output, text)
             await self._output.flush()
         finally:
