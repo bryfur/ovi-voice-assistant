@@ -83,15 +83,30 @@ class KokoroTTS(TTS):
         self._warmup()
 
     @staticmethod
-    def _select_providers() -> list[str]:
+    def _select_providers() -> list[str | tuple[str, dict[str, str]]]:
         available = set(ort.get_available_providers())
-        preferred = [
-            "CUDAExecutionProvider",
-            "CoreMLExecutionProvider",
-            "DmlExecutionProvider",
-            "CPUExecutionProvider",
-        ]
-        return [p for p in preferred if p in available] or ["CPUExecutionProvider"]
+        providers: list[str | tuple[str, dict[str, str]]] = []
+
+        if "CUDAExecutionProvider" in available:
+            providers.append("CUDAExecutionProvider")
+        elif "CoreMLExecutionProvider" in available:
+            cache_dir = str(MODELS_DIR / "coreml_cache")
+            providers.append(
+                (
+                    "CoreMLExecutionProvider",
+                    {
+                        "ModelFormat": "MLProgram",
+                        "MLComputeUnits": "ALL",
+                        "RequireStaticInputShapes": "0",
+                        "ModelCacheDirectory": cache_dir,
+                    },
+                )
+            )
+        elif "DmlExecutionProvider" in available:
+            providers.append("DmlExecutionProvider")
+
+        providers.append("CPUExecutionProvider")
+        return providers
 
     def _warmup(self) -> None:
         assert self._kokoro is not None

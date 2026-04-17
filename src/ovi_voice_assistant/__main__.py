@@ -75,6 +75,8 @@ def main(
     # Silence noisy third-party loggers even in debug mode
     for name in ("aioesphomeapi", "httpx", "httpcore", "openai", "bleak"):
         logging.getLogger(name).setLevel(logging.INFO)
+    for name in ("numba", "matplotlib", "librosa", "transformers", "urllib3"):
+        logging.getLogger(name).setLevel(logging.WARNING)
     logger = logging.getLogger("ovi_voice_assistant")
 
     if gen_key:

@@ -130,9 +130,16 @@ class WiFiTransport(DeviceTransport):
         sock: socket.socket = self._writer.get_extra_info("socket")
         if sock is not None:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 10)
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 5)
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+            # macOS uses TCP_KEEPALIVE; Linux uses TCP_KEEPIDLE
+            idle_opt = getattr(socket, "TCP_KEEPALIVE", None) or getattr(
+                socket, "TCP_KEEPIDLE", None
+            )
+            if idle_opt is not None:
+                sock.setsockopt(socket.IPPROTO_TCP, idle_opt, 10)
+            if hasattr(socket, "TCP_KEEPINTVL"):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 5)
+            if hasattr(socket, "TCP_KEEPCNT"):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
 
         # TODO: Noise handshake when encryption_key is set
 

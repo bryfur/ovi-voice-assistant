@@ -48,7 +48,7 @@ class LlmConfig(BaseModel):
     model: str = "gpt-4o-mini"
     instructions: str = (
         "You are a voice assistant. Your responses will be spoken aloud. "
-        "Rules: Reply in 1-2 short sentences if possible. Never explain your reasoning. "
+        "Rules: Reply in 8-9 short sentences if possible. Never explain your reasoning. "
         "Never use markdown, bullet points, or lists. Never include internal thoughts. "
         "Just give a direct, natural spoken answer. "
         "If your response asks a question or requires a follow-up from the user, "
@@ -73,6 +73,9 @@ class TtsConfig(BaseModel):
     speaker_id: int | None = None
     length_scale: float = 1.0
     sentence_silence: float = 0.1
+    # qwen3 only:
+    language: str = "english"
+    reference_audio: str = ""  # path to ref WAV/FLAC/MP3; empty = built-in shadowheart
 
 
 class TransportConfig(BaseModel):

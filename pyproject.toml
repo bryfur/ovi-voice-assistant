@@ -31,6 +31,10 @@ dependencies = [
 
 [project.optional-dependencies]
 piper = ["piper-tts==1.4.2"]
+qwen3 = [
+    "transformers>=4.57.3,<5",  # only Qwen2TokenizerFast is used at runtime
+    "soundfile>=0.12",
+]
 
 [dependency-groups]
 dev = ["esphome==2026.3.2", "pytest>=8.0", "pytest-asyncio>=0.25", "ruff>=0.11"]
@@ -39,7 +43,7 @@ dev = ["esphome==2026.3.2", "pytest>=8.0", "pytest-asyncio>=0.25", "ruff>=0.11"]
 ovi = "ovi_voice_assistant.__main__:main"
 
 [tool.pytest.ini_options]
-testpaths = ["src"]
+testpaths = ["src", "tests"]
 python_files = ["*_test.py"]
 asyncio_mode = "auto"
 

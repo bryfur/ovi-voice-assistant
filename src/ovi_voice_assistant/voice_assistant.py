@@ -47,6 +47,10 @@ def _create_tts(settings: Settings, sample_rate: int = 16000) -> TTS:
             from ovi_voice_assistant.tts.kokoro_tts import KokoroTTS
 
             TTS_PROVIDERS["kokoro"] = KokoroTTS
+        elif settings.tts.provider == "qwen3":
+            from ovi_voice_assistant.tts.qwen3_tts import Qwen3TTS
+
+            TTS_PROVIDERS["qwen3"] = Qwen3TTS
     cls = TTS_PROVIDERS.get(settings.tts.provider)
     if cls is None:
         raise ValueError(f"Unknown TTS provider: {settings.tts.provider}")

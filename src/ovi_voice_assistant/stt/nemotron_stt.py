@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # ── Silero VAD parameters (shared with WhisperSTT) ──────────────
 
 VAD_THRESHOLD = 0.4
-SILENCE_TIMEOUT_S = 1.0
+SILENCE_TIMEOUT_S = 0.75
 MIN_SPEECH_S = 0.3
 MAX_LISTEN_S = 60.0
 NO_SPEECH_TIMEOUT_S = 5.0
@@ -148,7 +148,6 @@ class NemotronSTT(STT):
         if self._settings.stt.device == "cuda" and "CUDAExecutionProvider" in available:
             return ["CUDAExecutionProvider", "CPUExecutionProvider"]
         preferred = [
-            "CoreMLExecutionProvider",
             "DmlExecutionProvider",
             "CPUExecutionProvider",
         ]

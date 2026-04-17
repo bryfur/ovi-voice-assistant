@@ -110,7 +110,7 @@ class TestConstants:
         assert VAD_THRESHOLD == 0.4
 
     def test_silence_timeout(self):
-        assert SILENCE_TIMEOUT_S == 1.0
+        assert SILENCE_TIMEOUT_S == 0.75
 
     def test_min_speech(self):
         assert MIN_SPEECH_S == 0.3
