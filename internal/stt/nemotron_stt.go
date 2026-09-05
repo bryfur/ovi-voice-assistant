@@ -65,7 +65,7 @@ func (n *nemotron) Load() error {
 	if n.rec = sherpa.NewOnlineRecognizer(&rc); n.rec == nil {
 		return errLoad("Nemotron")
 	}
-	if n.vad, err = newSileroVAD(0.75); err != nil {
+	if n.vad, err = newSileroVAD(n.cfg.Silence); err != nil {
 		return err
 	}
 	slog.Info("Nemotron STT ready", "chunk", chunk)

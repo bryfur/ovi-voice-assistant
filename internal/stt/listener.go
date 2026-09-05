@@ -84,7 +84,10 @@ func listen(ctx context.Context, mic <-chan []byte, v vad, onSpeech func(), feed
 // sileroVAD adapts sherpa's VAD to the vad interface.
 type sileroVAD struct{ v *sherpa.VoiceActivityDetector }
 
-func newSileroVAD(minSilence float32) (*sileroVAD, error) {
+func newSileroVAD(minSilence float64) (*sileroVAD, error) {
+	if minSilence <= 0 {
+		minSilence = 0.75
+	}
 	path, err := models.EnsureFile(models.ASR, "silero_vad.onnx")
 	if err != nil {
 		return nil, err
@@ -93,7 +96,7 @@ func newSileroVAD(minSilence float32) (*sileroVAD, error) {
 	cfg.SileroVad = sherpa.SileroVadModelConfig{
 		Model:              path,
 		Threshold:          vadThreshold,
-		MinSilenceDuration: minSilence,
+		MinSilenceDuration: float32(minSilence),
 		MinSpeechDuration:  minSpeech,
 		MaxSpeechDuration:  float32(maxListen.Seconds()),
 		WindowSize:         512,

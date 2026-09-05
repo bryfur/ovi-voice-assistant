@@ -20,14 +20,19 @@ type TTS interface {
 // ListenToken marks a response that expects a follow-up; it is never spoken.
 const ListenToken = "[LISTEN]"
 
-// SplitSentences turns a token stream into sentences at .!? boundaries,
-// stripping [LISTEN], and calls emit for each.
+// SplitSentences turns a token stream into speakable chunks, stripping
+// [LISTEN], and calls emit for each. Chunks end at sentence boundaries
+// (.!?), except the very first one, which may also end at a clause
+// boundary (,;:) once it has a few words — audio starts before the model
+// has finished its first sentence.
 func SplitSentences(ctx context.Context, tokens <-chan string, emit func(string) error) error {
+	first := true
 	flush := func(s string) error {
 		s = strings.TrimSpace(strings.ReplaceAll(s, ListenToken, ""))
 		if s == "" {
 			return nil
 		}
+		first = false
 		return emit(s)
 	}
 	var buf []rune
@@ -44,24 +49,39 @@ func SplitSentences(ctx context.Context, tokens <-chan string, emit func(string)
 		}
 		buf = append(buf, []rune(tok)...)
 		for {
-			cut := sentenceEnd(buf)
+			cut := chunkEnd(buf, first)
 			if cut < 0 {
 				break
 			}
-			sentence := string(buf[:cut])
+			chunk := string(buf[:cut])
 			buf = []rune(strings.TrimLeft(string(buf[cut:]), " \t\n\r"))
-			if err := flush(sentence); err != nil {
+			if err := flush(chunk); err != nil {
 				return err
 			}
 		}
 	}
 }
 
-// sentenceEnd returns the index just past the first sentence terminator
-// that is followed by a space (or ends the buffer), or -1.
-func sentenceEnd(buf []rune) int {
+// Minimum words before the first chunk may end at a clause boundary.
+const firstChunkWords = 4
+
+// chunkEnd returns the index just past the first boundary that is followed
+// by a space (or ends the buffer), or -1. Sentence boundaries need more
+// than 10 characters so "3.14" or "Dr." do not split.
+func chunkEnd(buf []rune, first bool) int {
+	words := 0
 	for i, ch := range buf {
-		if strings.ContainsRune(".!?", ch) && i > 10 && (i+1 == len(buf) || buf[i+1] == ' ') {
+		if ch == ' ' {
+			words++
+		}
+		atEnd := i+1 == len(buf) || buf[i+1] == ' '
+		if !atEnd {
+			continue
+		}
+		if strings.ContainsRune(".!?", ch) && i > 10 {
+			return i + 1
+		}
+		if first && strings.ContainsRune(",;:", ch) && words >= firstChunkWords-1 {
 			return i + 1
 		}
 	}

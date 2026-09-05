@@ -61,7 +61,7 @@ func (w *whisper) Load() error {
 	if w.rec = sherpa.NewOfflineRecognizer(&rc); w.rec == nil {
 		return errLoad("Whisper " + name)
 	}
-	if w.vad, err = newSileroVAD(1.0); err != nil {
+	if w.vad, err = newSileroVAD(w.cfg.Silence); err != nil {
 		return err
 	}
 	slog.Info("Whisper STT ready", "model", name)

@@ -11,8 +11,8 @@ ESPHome device → server → device, all streaming.
 1. **transport** — WiFi TCP or BLE GATT. Length-prefixed frames; codec-agnostic.
 2. **device** — `DeviceConnection` bridges transport to pipeline (codec, mic queue, session task); `DeviceManager` handles many devices and wake-word arbitration (0.5 s window).
 3. **pipeline** — `VoiceAssistant` runs STT → Agent → TTS for one utterance. `EncodingOutput` paces encoded audio to real time and orders events with playback. `SpeechQueue` serializes utterances.
-4. **stt** — one VAD-driven `listen` loop (Silero via sherpa-onnx) feeding either Nemotron (online transducer, decodes while you talk) or Whisper (offline, decodes the segment).
-5. **tts** — Kokoro or Piper through sherpa-onnx `OfflineTts`; `MaxNumSentences: 1` so audio streams per sentence.
+4. **stt** — one VAD-driven `listen` loop (Silero via sherpa-onnx) feeding either Nemotron (online transducer, decodes while you talk; the tail after end-of-speech is ~0 ms) or Whisper (offline, decodes the segment). `stt.silence` is the main latency knob.
+5. **tts** — Kokoro (fp32 pack; int8 is 3× slower on x86 CPUs) or Piper through sherpa-onnx `OfflineTts`. `SplitSentences` ends the first chunk at a clause boundary so audio starts early; later chunks end at sentences.
 6. **agent** — OpenAI SDK streaming loop with 19 built-in tools, MCP stdio servers, sub-agents as tools. History is per wake session, in memory.
 7. **music** — YouTube via `yt-dlp` + `ffmpeg`; Spotify / Apple Music via chromedp tab capture, enabled with `music.services`; `MusicGroup` for multi-room sync.
 8. **scheduler** — cron automations; **models** — downloads sherpa-onnx packs to `~/.cache/ovi/models`.

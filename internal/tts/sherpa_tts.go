@@ -18,7 +18,8 @@ import (
 )
 
 const (
-	kokoroPack   = "kokoro-int8-multi-lang-v1_0"
+	// fp32 on purpose: the int8 pack is ~3x slower on x86 CPUs.
+	kokoroPack   = "kokoro-multi-lang-v1_0"
 	defaultVoice = "af_heart"
 )
 
@@ -114,7 +115,7 @@ func (s *Sherpa) kokoro() (sherpa.OfflineTtsKokoroModelConfig, error) {
 	if err != nil {
 		return c, err
 	}
-	model, err := models.Find(dir, "model.int8.onnx", "model.onnx")
+	model, err := models.Find(dir, "model.onnx", "model.int8.onnx")
 	if err != nil {
 		return c, err
 	}

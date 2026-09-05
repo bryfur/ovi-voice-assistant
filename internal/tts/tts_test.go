@@ -32,18 +32,20 @@ func sentences(t *testing.T, parts ...string) []string {
 
 func TestSplitSentences(t *testing.T) {
 	cases := map[string][]string{
-		"boundaries": sentences(t, "Hello there, how ", "are you today? I am ", "doing fine. Thanks!"),
-		"listen":     sentences(t, "Do you want more details? [LISTEN]"),
-		"short":      sentences(t, "Dr. Smith is here now."),
-		"remainder":  sentences(t, "no punctuation at all"),
-		"empty":      sentences(t, "   ", "[LISTEN]"),
+		"boundaries":   sentences(t, "Hello there, how ", "are you today? I am ", "doing fine. Thanks!"),
+		"first clause": sentences(t, "The weather is sunny today, ", "with a high of seventy, and ", "rain later. Bring a coat, please."),
+		"listen":       sentences(t, "Do you want more details? [LISTEN]"),
+		"short":        sentences(t, "Dr. Smith is here now."),
+		"remainder":    sentences(t, "no punctuation at all"),
+		"empty":        sentences(t, "   ", "[LISTEN]"),
 	}
 	want := map[string]string{
-		"boundaries": "Hello there, how are you today?|I am doing fine.|Thanks!",
-		"listen":     "Do you want more details?",
-		"short":      "Dr. Smith is here now.",
-		"remainder":  "no punctuation at all",
-		"empty":      "",
+		"boundaries":   "Hello there, how are you today?|I am doing fine.|Thanks!",
+		"first clause": "The weather is sunny today,|with a high of seventy, and rain later.|Bring a coat, please.",
+		"listen":       "Do you want more details?",
+		"short":        "Dr. Smith is here now.",
+		"remainder":    "no punctuation at all",
+		"empty":        "",
 	}
 	for name, got := range cases {
 		if strings.Join(got, "|") != want[name] {

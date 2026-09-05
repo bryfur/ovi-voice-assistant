@@ -109,9 +109,10 @@ type LLMConfig struct {
 
 // STTConfig configures speech-to-text.
 type STTConfig struct {
-	Provider string `yaml:"provider"` // nemotron | whisper
-	Model    string `yaml:"model"`    // nemotron: chunk (80ms|160ms|560ms|1120ms); whisper: tiny.en, base.en, ...
-	Language string `yaml:"language"` // whisper multilingual models only
+	Provider string  `yaml:"provider"` // nemotron | whisper
+	Model    string  `yaml:"model"`    // nemotron: chunk (80ms|160ms|560ms|1120ms); whisper: tiny.en, base.en, ...
+	Language string  `yaml:"language"` // whisper multilingual models only
+	Silence  float64 `yaml:"silence"`  // seconds of silence that end an utterance; the main latency knob
 }
 
 // TTSConfig configures text-to-speech.
@@ -196,7 +197,7 @@ func Default() *Settings {
 			Model:        "gpt-4o-mini",
 			Instructions: DefaultInstructions,
 		},
-		STT:         STTConfig{Provider: "nemotron", Model: "560ms", Language: "en"},
+		STT:         STTConfig{Provider: "nemotron", Model: "560ms", Language: "en", Silence: 0.75},
 		TTS:         TTSConfig{Provider: "kokoro", Model: "af_heart", Speed: 1},
 		Transport:   TransportConfig{Type: "wifi", Codec: "lc3"},
 		Automations: AutomationsConfig{Path: "~/.ovi/automations.json"},

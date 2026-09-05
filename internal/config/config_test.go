@@ -74,7 +74,7 @@ func TestDefaults(t *testing.T) {
 	if s.LLM.Model != "gpt-4o-mini" || s.STT.Provider != "nemotron" || s.TTS.Provider != "kokoro" {
 		t.Fatalf("unexpected defaults: %+v", s)
 	}
-	if s.Transport.Codec != "lc3" || s.STT.Model != "560ms" || s.TTS.Speed != 1 {
+	if s.Transport.Codec != "lc3" || s.STT.Model != "560ms" || s.STT.Silence != 0.75 || s.TTS.Speed != 1 {
 		t.Fatalf("unexpected defaults: %+v", s)
 	}
 }

@@ -44,7 +44,7 @@ ESPHome Device (speaker)   ◄── encoded audio ◄────────�
 - An ESPHome-compatible device (see above) and an OpenAI-compatible LLM endpoint
 - [ESPHome](https://esphome.io) only if you flash firmware with `ovi --flash`
 
-sherpa-onnx ships prebuilt as part of the Go module; speech models download into `~/.cache/ovi/models` on first use (Nemotron ~460 MB, Kokoro ~130 MB, Piper voices ~70 MB).
+sherpa-onnx ships prebuilt as part of the Go module; speech models download into `~/.cache/ovi/models` on first use (Nemotron ~460 MB, Kokoro ~350 MB, Piper voices ~70 MB).
 
 ## Quick start
 
@@ -89,6 +89,7 @@ stt:
   provider: nemotron         # nemotron | whisper
   model: 560ms               # nemotron chunk: 80ms | 160ms | 560ms | 1120ms
                              # whisper: tiny.en | base.en | small.en | medium.en | turbo | distil-large-v3
+  silence: 0.75              # seconds of silence that end your turn; lower = snappier, higher = tolerates pauses
 
 tts:
   provider: kokoro           # kokoro | piper
@@ -140,6 +141,12 @@ writes a key to `esphome/secrets.yaml`. Uncomment the `api.encryption` block in 
 ## Agent tools
 
 19 built-in tools: timers (`set_timer`, `check_timer`, `cancel_timer`), `get_current_time`, `calculate`, `unit_convert`, `roll_dice`, `random_number`, `flip_coin`, music (`play_music` with a `service` of youtube / spotify / apple, `pause_music`, `resume_music`, `skip_track`, `stop_music`, `now_playing`) and automations (`create_automation`, `list_automations`, `delete_automation`, `toggle_automation`). Add more through MCP servers (`llm.mcp_servers`) and sub-agents (`llm.agents`); see `mcp.json` and `agents.json`.
+
+## Latency
+
+Everything streams: mic audio is decoded while you talk, the transcript is ready as soon as the VAD closes your turn, LLM tokens are spoken chunk by chunk, and encoded audio is paced to the device 300 ms ahead of playback. After you stop talking the fixed costs are the `stt.silence` window, the LLM's first tokens, and synthesis of the first chunk. The first chunk ends at the first clause boundary so speech starts before the model finishes its first sentence.
+
+Measured on a 4-core x86 laptop (CPU only), synthesis of a 12-word sentence: Kokoro fp32 0.5 s, Piper medium 0.1 s. The Kokoro int8 pack is three times slower than fp32 on x86 and is not used. Pick Piper when latency matters more than voice quality.
 
 ## Device features
 
