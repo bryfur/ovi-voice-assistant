@@ -7,7 +7,7 @@ import (
 
 func TestRegisterBrowserAndSearchDispatch(t *testing.T) {
 	fb := &fakeBrowser{}
-	registerBrowser("fake", fb)
+	RegisterBrowser("fake", fb)
 	defer func() {
 		browsersMu.Lock()
 		delete(browsers, "fake")

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/bryfur/ovi-voice-assistant/internal/device"
-	"github.com/bryfur/ovi-voice-assistant/internal/speech"
+	"github.com/bryfur/ovi-voice-assistant/internal/speech/tts"
 	"log/slog"
 	"sync"
 )
@@ -25,7 +25,7 @@ type speechItem struct {
 // streaming audio to the output so utterances never overlap on the wire.
 type speechQueue struct {
 	ctx    context.Context
-	tts    speech.TTS
+	tts    tts.TTS
 	output device.Output
 
 	// mu is held for reading while a submission is in flight and for
@@ -37,7 +37,7 @@ type speechQueue struct {
 }
 
 // newSpeechQueue creates a queue bound to ctx; Stop must be called.
-func newSpeechQueue(ctx context.Context, t speech.TTS, output device.Output) *speechQueue {
+func newSpeechQueue(ctx context.Context, t tts.TTS, output device.Output) *speechQueue {
 	return &speechQueue{ctx: ctx, tts: t, output: output}
 }
 
@@ -106,7 +106,7 @@ func (q *speechQueue) Stop() {
 func (q *speechQueue) run(queue chan speechItem, done chan struct{}) {
 	defer close(done)
 	for item := range queue {
-		err := speech.Stream(q.ctx, q.tts, item.tokens, func(pcm []byte) error {
+		err := tts.Stream(q.ctx, q.tts, item.tokens, func(pcm []byte) error {
 			return q.output.SendAudio(q.ctx, pcm)
 		})
 		if err != nil && q.ctx.Err() == nil {

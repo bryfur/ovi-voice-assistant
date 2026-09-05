@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"github.com/bryfur/ovi-voice-assistant/internal/agent/scheduler"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -172,7 +173,7 @@ func TestMusicControlsWithoutQueue(t *testing.T) {
 }
 
 func TestAutomationTools(t *testing.T) {
-	actx := &Context{Scheduler: NewScheduler(filepath.Join(t.TempDir(), "a.json"), nil, nil)}
+	actx := &Context{Scheduler: scheduler.New(filepath.Join(t.TempDir(), "a.json"), nil, nil)}
 
 	created := call(t, "create_automation", actx, Args{"name": "morning", "schedule": "0 7 * * *", "prompt": "weather?"})
 	invalid := call(t, "create_automation", actx, Args{"name": "bad", "schedule": "nope", "prompt": "x"})

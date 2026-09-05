@@ -6,7 +6,8 @@ package pipeline
 import (
 	"context"
 	"github.com/bryfur/ovi-voice-assistant/internal/device"
-	"github.com/bryfur/ovi-voice-assistant/internal/speech"
+	"github.com/bryfur/ovi-voice-assistant/internal/speech/stt"
+	"github.com/bryfur/ovi-voice-assistant/internal/speech/tts"
 	"log/slog"
 	"strings"
 
@@ -27,19 +28,19 @@ type Agent interface {
 // VoiceAssistant runs STT → Agent → TTS for one utterance. It works in
 // PCM; codec encoding is the caller's job.
 type VoiceAssistant struct {
-	STT   speech.STT
-	TTS   speech.TTS
+	STT   stt.STT
+	TTS   tts.TTS
 	Agent Agent
 }
 
 // New creates the pipeline with the configured providers; TTS outputs at
 // ttsRate.
 func New(s *config.Settings, ttsRate int) (*VoiceAssistant, error) {
-	st, err := speech.NewSTT(s.STT)
+	st, err := stt.New(s.STT)
 	if err != nil {
 		return nil, err
 	}
-	t, err := speech.NewTTS(s.TTS, ttsRate)
+	t, err := tts.New(s.TTS, ttsRate)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +112,7 @@ func (v *VoiceAssistant) Run(ctx context.Context, out device.Output, mic <-chan 
 	}
 	_ = out.SendEvent(ctx, device.EventTTSEnd, nil)
 
-	followUp := strings.Contains(sb.String(), speech.ListenToken)
+	followUp := strings.Contains(sb.String(), tts.ListenToken)
 	if followUp {
 		_ = out.SendEvent(ctx, device.EventContinue, nil)
 	}

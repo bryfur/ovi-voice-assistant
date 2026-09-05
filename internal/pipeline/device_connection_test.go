@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"github.com/bryfur/ovi-voice-assistant/internal/device"
+	"github.com/bryfur/ovi-voice-assistant/internal/device/codec"
 	"sync"
 	"testing"
 	"time"
@@ -144,7 +145,7 @@ func newConn(t *testing.T, opts DeviceOptions) (*DeviceConnection, *fakeTranspor
 	pl := newFakePipeline()
 	s := config.Default()
 	s.Transport.Codec = "pcm"
-	c := NewDeviceConnection(tr, device.NewPCMCodec(16000, 1), pl, s, opts)
+	c := NewDeviceConnection(tr, codec.NewPCMCodec(16000, 1), pl, s, opts)
 	c.SetupDelay = 0
 	if err := c.Start(); err != nil {
 		t.Fatal(err)
@@ -289,7 +290,7 @@ func TestMicConfigRequestsPreferredCodec(t *testing.T) {
 	c.mu.Lock()
 	mic := c.micCodec
 	c.mu.Unlock()
-	if mic == nil || mic.Type() != device.PCM {
+	if mic == nil || mic.Type() != codec.PCM {
 		t.Fatalf("mic codec = %v", mic)
 	}
 }

@@ -4,6 +4,7 @@ package agent
 
 import (
 	"fmt"
+	"github.com/bryfur/ovi-voice-assistant/internal/agent/scheduler"
 	"log/slog"
 	"sync"
 	"time"
@@ -16,7 +17,7 @@ type Context struct {
 	Announce    func(text string) // speak on the device (fire-and-forget)
 	MusicPlayer *music.MusicPlayer
 	MusicGroup  *music.MusicGroup
-	Scheduler   *Scheduler
+	Scheduler   *scheduler.Scheduler
 
 	mu     sync.Mutex
 	timers map[string]*timer

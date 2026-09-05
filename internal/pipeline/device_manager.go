@@ -3,8 +3,9 @@ package pipeline
 import (
 	"context"
 	"fmt"
-	"github.com/bryfur/ovi-voice-assistant/internal/agent"
+	"github.com/bryfur/ovi-voice-assistant/internal/agent/scheduler"
 	"github.com/bryfur/ovi-voice-assistant/internal/device"
+	"github.com/bryfur/ovi-voice-assistant/internal/device/codec"
 	"log/slog"
 	"sort"
 	"sync"
@@ -54,7 +55,7 @@ func NewDeviceManager(devices []config.DeviceConfig, settings *config.Settings, 
 
 	// Shared music group for synchronized multi-device playback. Created
 	// here so all devices share the same player/queue.
-	musicCodec, err := device.NewCodec(settings.Transport.Codec, 48000, 2, device.LC3MusicNByte)
+	musicCodec, err := codec.NewCodec(settings.Transport.Codec, 48000, 2, codec.LC3MusicNByte)
 	if err != nil {
 		return nil, fmt.Errorf("music codec: %w", err)
 	}
@@ -66,7 +67,7 @@ func NewDeviceManager(devices []config.DeviceConfig, settings *config.Settings, 
 		onWake = m.onWake
 	}
 	for _, dev := range devices {
-		c, err := device.NewCodec(settings.Transport.Codec, ttsRate, 1, 0)
+		c, err := codec.NewCodec(settings.Transport.Codec, ttsRate, 1, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -125,7 +126,7 @@ func (m *DeviceManager) AnnounceAll(ctx context.Context, text string) error {
 }
 
 // SetScheduler attaches the scheduler to all device connections.
-func (m *DeviceManager) SetScheduler(s *agent.Scheduler) {
+func (m *DeviceManager) SetScheduler(s *scheduler.Scheduler) {
 	for _, c := range m.connections {
 		c.SetScheduler(s)
 	}

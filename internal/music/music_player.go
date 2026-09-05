@@ -165,8 +165,8 @@ func (p *MusicPlayer) Stream(ctx context.Context, output device.Output) error {
 
 // streamTrack streams a track via browser capture or yt-dlp + ffmpeg.
 func (p *MusicPlayer) streamTrack(ctx context.Context, output device.Output, track MusicTrack) error {
-	if browser, ok := p.browsers[track.Service]; ok {
-		return browser.StreamTrack(ctx, track, output)
+	if b, ok := p.browsers[track.Service]; ok {
+		return b.StreamTrack(ctx, track, output)
 	}
 
 	audioURL, err := p.ExtractURL(ctx, track.VideoID)

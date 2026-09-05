@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/bryfur/ovi-voice-assistant/internal/agent/mcp"
 	"log/slog"
 	"os"
 	"strings"
@@ -29,12 +30,12 @@ const LevelTrace = slog.LevelDebug - 4
 
 // SubAgent is a nested agent exposed to the main agent as a tool.
 type SubAgent struct {
-	Name         string      `json:"name"`
-	Description  string      `json:"description"`
-	Instructions string      `json:"instructions"`
-	MCPServers   []MCPServer `json:"mcp_servers"`
+	Name         string             `json:"name"`
+	Description  string             `json:"description"`
+	Instructions string             `json:"instructions"`
+	MCPServers   []mcp.ServerConfig `json:"mcp_servers"`
 
-	servers []*mcpClient
+	servers []*mcp.Client
 }
 
 // parseSubAgents parses a JSON array of sub-agents, or "@path" to a file.
@@ -72,7 +73,7 @@ type Assistant struct {
 	reqOpts []option.RequestOption // per-request extras, e.g. thinking off
 
 	tools   []Tool // builtins + sub-agents
-	mcp     []*mcpClient
+	mcp     []*mcp.Client
 	subs    []*SubAgent
 	mu      sync.Mutex
 	history messages
@@ -100,13 +101,13 @@ func (a *Assistant) Load() error {
 			option.WithJSONSet("think", false))
 	}
 
-	servers, err := parseMCPServers(a.cfg.MCPServers)
+	servers, err := mcp.ParseServers(a.cfg.MCPServers)
 	if err != nil {
 		return err
 	}
 	a.mcp = nil
 	for _, s := range servers {
-		a.mcp = append(a.mcp, newMCPClient(s))
+		a.mcp = append(a.mcp, mcp.NewClient(s))
 	}
 	if a.subs, err = parseSubAgents(a.cfg.Agents); err != nil {
 		return err
@@ -114,7 +115,7 @@ func (a *Assistant) Load() error {
 	a.tools = builtinTools()
 	for _, sub := range a.subs {
 		for _, s := range sub.MCPServers {
-			sub.servers = append(sub.servers, newMCPClient(s))
+			sub.servers = append(sub.servers, mcp.NewClient(s))
 		}
 		a.tools = append(a.tools, a.subAgentTool(sub))
 	}
@@ -122,8 +123,8 @@ func (a *Assistant) Load() error {
 	return nil
 }
 
-func (a *Assistant) allMCP() []*mcpClient {
-	all := append([]*mcpClient(nil), a.mcp...)
+func (a *Assistant) allMCP() []*mcp.Client {
+	all := append([]*mcp.Client(nil), a.mcp...)
 	for _, sub := range a.subs {
 		all = append(all, sub.servers...)
 	}
@@ -279,7 +280,7 @@ func (a *Assistant) call(ctx context.Context, handlers map[string]Handler, actx 
 
 // toolset builds the model-visible definitions and handler map for a set
 // of tools and MCP servers. First definition of a name wins.
-func (a *Assistant) toolset(tools []Tool, servers []*mcpClient) ([]openai.ChatCompletionToolUnionParam, map[string]Handler) {
+func (a *Assistant) toolset(tools []Tool, servers []*mcp.Client) ([]openai.ChatCompletionToolUnionParam, map[string]Handler) {
 	var defs []openai.ChatCompletionToolUnionParam
 	handlers := map[string]Handler{}
 	add := func(t Tool) {

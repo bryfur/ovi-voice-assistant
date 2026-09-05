@@ -3,6 +3,7 @@ package device
 import (
 	"context"
 	"errors"
+	"github.com/bryfur/ovi-voice-assistant/internal/device/codec"
 	"log/slog"
 	"sync"
 	"time"
@@ -44,7 +45,7 @@ type outputItem struct {
 // off the tail of buffered audio.
 type EncodingOutput struct {
 	transport Transport
-	codec     AudioCodec
+	codec     codec.AudioCodec
 
 	mu            sync.Mutex
 	pcmBuf        []byte
@@ -59,11 +60,11 @@ type EncodingOutput struct {
 	Now func() time.Time
 	// OnAudioConfig, if set, is called with the codec each time AUDIO_CONFIG
 	// is sent to the device (before TTS_START).
-	OnAudioConfig func(AudioCodec)
+	OnAudioConfig func(codec.AudioCodec)
 }
 
 // NewEncodingOutput creates an output for a transport and codec.
-func NewEncodingOutput(t Transport, c AudioCodec) *EncodingOutput {
+func NewEncodingOutput(t Transport, c codec.AudioCodec) *EncodingOutput {
 	o := &EncodingOutput{
 		transport:     t,
 		codec:         c,

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/bryfur/ovi-voice-assistant/internal/agent/scheduler"
 	"github.com/bryfur/ovi-voice-assistant/internal/device"
+	"github.com/bryfur/ovi-voice-assistant/internal/device/codec"
 	"log/slog"
 	"sync"
 	"time"
@@ -33,15 +35,15 @@ type DeviceConnection struct {
 	Name string
 
 	transport device.Transport
-	spkCodec  device.AudioCodec
+	spkCodec  codec.AudioCodec
 	pipeline  Runner
 	settings  *config.Settings
 	output    *device.EncodingOutput
 	onWake    WakeCallback
 
 	mu          sync.Mutex
-	micCodec    device.AudioCodec // created when device sends MIC_CONFIG
-	lastSpeaker string            // last speaker config announced to the device
+	micCodec    codec.AudioCodec // created when device sends MIC_CONFIG
+	lastSpeaker string           // last speaker config announced to the device
 	audioQueue  chan []byte
 	taskCancel  context.CancelFunc
 	taskDone    chan struct{}
@@ -62,7 +64,7 @@ type DeviceOptions struct {
 }
 
 // NewDeviceConnection creates an unstarted connection.
-func NewDeviceConnection(t device.Transport, spkCodec device.AudioCodec, p Runner, settings *config.Settings, opts DeviceOptions) *DeviceConnection {
+func NewDeviceConnection(t device.Transport, spkCodec codec.AudioCodec, p Runner, settings *config.Settings, opts DeviceOptions) *DeviceConnection {
 	name := opts.Name
 	if name == "" {
 		name = t.String()
@@ -84,8 +86,8 @@ func NewDeviceConnection(t device.Transport, spkCodec device.AudioCodec, p Runne
 }
 
 // speakerConfig logs the speaker settings whenever they change (voice ↔ music).
-func (c *DeviceConnection) speakerConfig(cd device.AudioCodec) {
-	desc := device.Describe(cd)
+func (c *DeviceConnection) speakerConfig(cd codec.AudioCodec) {
+	desc := codec.Describe(cd)
 	c.mu.Lock()
 	changed := desc != c.lastSpeaker
 	c.lastSpeaker = desc
@@ -103,7 +105,7 @@ func (c *DeviceConnection) Context() *agent.Context {
 }
 
 // SetScheduler attaches the scheduler so automation tools are available.
-func (c *DeviceConnection) SetScheduler(s *agent.Scheduler) {
+func (c *DeviceConnection) SetScheduler(s *scheduler.Scheduler) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.context != nil {
@@ -153,13 +155,13 @@ func (c *DeviceConnection) setupDevice() error {
 	// Music gets its own 48 kHz codec so playback is CD-quality+ while TTS
 	// stays at whatever rate the voice codec uses. AUDIO_CONFIG is re-sent
 	// before each TTS_START, so the device reconfigures its decoder.
-	musicCodec, err := device.NewCodec(c.settings.Transport.Codec, 48000, 2, device.LC3MusicNByte)
+	musicCodec, err := codec.NewCodec(c.settings.Transport.Codec, 48000, 2, codec.LC3MusicNByte)
 	if err != nil {
 		return fmt.Errorf("music codec: %w", err)
 	}
 	c.musicOutput = device.NewEncodingOutput(c.transport, musicCodec)
 	c.musicOutput.OnAudioConfig = c.speakerConfig
-	slog.Info("Music audio config", "device", c.Name, "codec", device.Describe(musicCodec))
+	slog.Info("Music audio config", "device", c.Name, "codec", codec.Describe(musicCodec))
 	if c.musicGroup != nil {
 		c.musicGroup.AddDevice(c.musicOutput, c.transport)
 	}
@@ -238,20 +240,20 @@ func (c *DeviceConnection) handleMicConfig(payload []byte) {
 	}
 	rate := int(binary.LittleEndian.Uint32(payload[0:]))
 	nbyte := int(binary.LittleEndian.Uint16(payload[4:]))
-	name := device.NameForID(payload[6])
+	name := codec.NameForID(payload[6])
 
 	// Use the device's reported mic codec
-	mic, err := device.NewCodec(string(name), rate, 1, nbyte)
+	mic, err := codec.NewCodec(string(name), rate, 1, nbyte)
 	if err != nil {
 		slog.Error("Cannot create mic codec", "codec", name, "err", err)
 		return
 	}
-	slog.Info("Mic audio config (device)", "device", c.Name, "codec", device.Describe(mic))
+	slog.Info("Mic audio config (device)", "device", c.Name, "codec", codec.Describe(mic))
 
 	// If the server prefers a different mic codec, request it
 	preferred := c.settings.Transport.Codec
 	if preferred != string(name) {
-		pref, err := device.NewCodec(preferred, rate, 1, 0)
+		pref, err := codec.NewCodec(preferred, rate, 1, 0)
 		if err == nil {
 			buf := make([]byte, 7)
 			binary.LittleEndian.PutUint32(buf[0:], uint32(rate))
@@ -259,7 +261,7 @@ func (c *DeviceConnection) handleMicConfig(payload []byte) {
 			buf[6] = pref.ID()
 			if err := c.transport.SendEvent(device.EventMicConfig, buf); err == nil {
 				mic = pref
-				slog.Info("Mic audio config (requested)", "device", c.Name, "codec", device.Describe(pref))
+				slog.Info("Mic audio config (requested)", "device", c.Name, "codec", codec.Describe(pref))
 			}
 		}
 	}

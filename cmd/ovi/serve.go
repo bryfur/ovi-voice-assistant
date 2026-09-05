@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
-	"github.com/bryfur/ovi-voice-assistant/internal/agent"
+	"github.com/bryfur/ovi-voice-assistant/internal/agent/scheduler"
+	"github.com/bryfur/ovi-voice-assistant/internal/device/codec"
+	"github.com/bryfur/ovi-voice-assistant/internal/music/browser"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -13,7 +15,6 @@ import (
 
 	"github.com/bryfur/ovi-voice-assistant/internal/config"
 	"github.com/bryfur/ovi-voice-assistant/internal/device"
-	"github.com/bryfur/ovi-voice-assistant/internal/music"
 	"github.com/bryfur/ovi-voice-assistant/internal/pipeline"
 )
 
@@ -28,7 +29,7 @@ func serve(s *config.Settings, deviceArgs []string) error {
 		}
 	}
 	// TTS renders at the rate the codec will actually use (LC3 snaps 22050→24000).
-	probe, err := device.NewCodec(s.Transport.Codec, 24000, 1, 0)
+	probe, err := codec.NewCodec(s.Transport.Codec, 24000, 1, 0)
 	if err != nil {
 		return err
 	}
@@ -46,17 +47,17 @@ func serve(s *config.Settings, deviceArgs []string) error {
 	if err := pl.Start(ctx); err != nil {
 		return err
 	}
-	stopMusic := music.StartServices(ctx, s.Music.Services, 48000)
+	stopMusic := browser.Start(ctx, s.Music.Services, 48000)
 	defer stopMusic()
 
-	var announce agent.AnnounceFunc
+	var announce scheduler.Announce
 	var stopDevices func(context.Context)
 	if ble {
 		t, err := device.NewBLETransport(s.BLE.DeviceName, s.BLE.DeviceAddress)
 		if err != nil {
 			return err
 		}
-		c, err := device.NewCodec(s.Transport.Codec, pl.TTS.SampleRate(), 1, 0)
+		c, err := codec.NewCodec(s.Transport.Codec, pl.TTS.SampleRate(), 1, 0)
 		if err != nil {
 			return err
 		}
@@ -91,8 +92,8 @@ func serve(s *config.Settings, deviceArgs []string) error {
 
 // attachScheduler loads and starts the automation scheduler; the returned
 // func stops it.
-func attachScheduler(s *config.Settings, pl *pipeline.VoiceAssistant, announce agent.AnnounceFunc, attach func(*agent.Scheduler)) func() {
-	sched := agent.NewScheduler(config.ExpandUser(s.Automations.Path),
+func attachScheduler(s *config.Settings, pl *pipeline.VoiceAssistant, announce scheduler.Announce, attach func(*scheduler.Scheduler)) func() {
+	sched := scheduler.New(config.ExpandUser(s.Automations.Path),
 		func(ctx context.Context, prompt string) (string, error) { return pl.Agent.RunText(ctx, prompt, nil) },
 		announce)
 	sched.Load()

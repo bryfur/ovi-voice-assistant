@@ -149,7 +149,7 @@ writes a key to `esphome/secrets.yaml`. Uncomment the `api.encryption` block in 
 
 Everything streams: mic audio is decoded while you talk, the transcript is ready as soon as the VAD closes your turn, LLM tokens are spoken chunk by chunk, and encoded audio is paced to the device 300 ms ahead of playback. After you stop talking the fixed costs are the `stt.silence` window, the LLM's first tokens, and synthesis of the first chunk. Thinking models spend their whole reasoning phase before the first spoken word; set `llm.reasoning: false` to ask them not to (sent as `reasoning_effort: none`, plus `enable_thinking: false` / `think: false` for local servers; some LM Studio builds only honour the per-model UI toggle). The first chunk ends at the first clause boundary so speech starts before the model finishes its first sentence.
 
-Measured with the process pinned to four 3.7 GHz cores of a Core Ultra 9 388H (a sandboxed dev shell; the full chip will be faster), synthesis of a 12-word sentence: Kokoro fp32 0.5 s, Piper medium 0.1 s. The Kokoro int8 pack was three times slower than fp32 on that CPU and is not used. Pick Piper when latency matters more than voice quality. Re-measure on your own hardware with `OVI_TEST_MODELS=1 go test ./internal/speech/ -run Latency -v` (and `OVI_TEST_PIPER=1` for Piper).
+Measured with the process pinned to four 3.7 GHz cores of a Core Ultra 9 388H (a sandboxed dev shell; the full chip will be faster), synthesis of a 12-word sentence: Kokoro fp32 0.5 s, Piper medium 0.1 s. The Kokoro int8 pack was three times slower than fp32 on that CPU and is not used. Pick Piper when latency matters more than voice quality. Re-measure on your own hardware with `OVI_TEST_MODELS=1 go test ./internal/speech/tts/ -run Latency -v` (and `OVI_TEST_PIPER=1` for Piper).
 
 ## Device features
 
@@ -164,21 +164,28 @@ Measured with the process pinned to four 3.7 GHz cores of a Core Ultra 9 388H (a
 ```bash
 go build ./... && go vet ./... && gofmt -l internal cmd     # lint
 go test ./...                                                # unit tests, no network or models
-OVI_TEST_MODELS=1 go test ./internal/speech/ -run Real       # real Kokoro + Silero (downloads)
-OVI_TEST_NEMOTRON=1 go test ./internal/speech/ -run Nemotron  # real Nemotron (460 MB download)
+OVI_TEST_MODELS=1 go test ./internal/speech/... -run Real       # real Kokoro + Silero (downloads)
+OVI_TEST_NEMOTRON=1 go test ./internal/speech/stt/ -run Nemotron # real Nemotron (460 MB download)
 ```
 
 ## Project structure
 
 ```
-cmd/ovi/          CLI flags and the serving loop
+cmd/ovi/              CLI flags and the serving loop
 internal/
-    config/       Layered settings
-    device/       Wire events, WiFi + BLE transports, PCM/LC3/Opus codecs, paced encoded output
-    speech/       sherpa-onnx: model downloads, Silero VAD, Nemotron + Whisper STT, Kokoro + Piper TTS, sentence streaming
-    agent/        OpenAI SDK tool-calling loop, built-in tools, MCP client, sub-agents, cron scheduler
-    music/        YouTube (yt-dlp), Spotify/Apple (browser capture), multi-room sync
-    pipeline/     STT → Agent → TTS per utterance, speech queue, device connection, wake arbitration
-    cli/          Prompts, mDNS discovery, config-file editing, ESPHome flashing, setup wizard
-esphome/          Device firmware: custom components and per-device YAMLs
+    config/           Layered settings
+    device/           Wire events, WiFi + BLE transports, paced encoded output
+        codec/        PCM, LC3 (cgo liblc3), Opus (cgo libopus)
+    speech/
+        models/       sherpa-onnx model pack downloads
+        stt/          Silero VAD listen loop, Nemotron (streaming), Whisper (offline)
+        tts/          Kokoro + Piper, sentence streaming, resampling
+    agent/            OpenAI SDK tool-calling loop, built-in tools, sub-agents
+        mcp/          MCP stdio client
+        scheduler/    Cron automations
+    music/            Player, multi-room sync, YouTube (yt-dlp)
+        browser/      Spotify / Apple Music via Chromium tab capture
+    pipeline/         STT → Agent → TTS per utterance, speech queue, device connection, wake arbitration
+    cli/              Prompts, mDNS discovery, config-file editing, ESPHome flashing, setup wizard
+esphome/              Device firmware: custom components and per-device YAMLs
 ```

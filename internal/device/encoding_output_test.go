@@ -3,6 +3,7 @@ package device
 import (
 	"bytes"
 	"context"
+	"github.com/bryfur/ovi-voice-assistant/internal/device/codec"
 	"sync"
 	"testing"
 	"time"
@@ -53,7 +54,7 @@ func (m *mockTransport) eventList() []sentEvent {
 func newOutput(t *testing.T) (*EncodingOutput, *mockTransport) {
 	t.Helper()
 	tr := &mockTransport{}
-	o := NewEncodingOutput(tr, NewPCMCodec(16000, 1))
+	o := NewEncodingOutput(tr, codec.NewPCMCodec(16000, 1))
 	o.Sleep = func(context.Context, time.Duration) {} // no real pacing in tests
 	t.Cleanup(o.Reset)
 	return o, tr
@@ -80,7 +81,7 @@ func TestTTSStartSendsAudioConfigFirst(t *testing.T) {
 func TestTTSStartReportsAudioConfig(t *testing.T) {
 	o, _ := newOutput(t)
 	var seen []string
-	o.OnAudioConfig = func(c AudioCodec) { seen = append(seen, Describe(c)) }
+	o.OnAudioConfig = func(c codec.AudioCodec) { seen = append(seen, codec.Describe(c)) }
 
 	o.SendEvent(context.Background(), EventTTSStart, nil)
 	o.SendEvent(context.Background(), EventTTSEnd, nil)

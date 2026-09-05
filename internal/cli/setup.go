@@ -2,7 +2,7 @@ package cli
 
 import (
 	"fmt"
-	"github.com/bryfur/ovi-voice-assistant/internal/speech"
+	"github.com/bryfur/ovi-voice-assistant/internal/speech/tts"
 	"strings"
 	"time"
 
@@ -37,7 +37,7 @@ var (
 func kokoroVoiceOptions() []Option {
 	desc := map[byte]string{'a': "American", 'b': "British"}
 	var out []Option
-	for _, v := range speech.KokoroVoices() {
+	for _, v := range tts.KokoroVoices() {
 		gender := "Female"
 		if v[1] == 'm' {
 			gender = "Male"
