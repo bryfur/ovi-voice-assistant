@@ -4,7 +4,7 @@ import "testing"
 
 func newOpus(t *testing.T) *OpusCodec {
 	t.Helper()
-	c, err := NewOpusCodec(16000, 1)
+	c, err := NewOpusCodec(16000, 1, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,6 +30,19 @@ func TestOpusEncodeProducesBytes(t *testing.T) {
 
 	if err != nil || len(enc) == 0 {
 		t.Fatalf("Encode = %d bytes, %v", len(enc), err)
+	}
+}
+
+func TestOpusMusicModeSetsBitrate(t *testing.T) {
+	c, err := NewOpusCodec(48000, 2, LC3MusicNByte)
+
+	if err != nil || c.Bitrate() != 96000 || c.EncodedFrameBytes() != 120 {
+		t.Fatalf("err=%v bitrate=%d frameBytes=%d", err, c.Bitrate(), c.EncodedFrameBytes())
+	}
+	enc, _ := c.Encode(make([]byte, c.PCMFrameBytes()))
+	dec, err := c.Decode(enc)
+	if err != nil || len(dec) != c.PCMFrameBytes() {
+		t.Fatalf("round trip: %d bytes, %v", len(dec), err)
 	}
 }
 

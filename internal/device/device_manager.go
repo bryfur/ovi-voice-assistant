@@ -55,7 +55,7 @@ func NewDeviceManager(devices []config.DeviceConfig, settings *config.Settings, 
 
 	// Shared music group for synchronized multi-device playback. Created
 	// here so all devices share the same player/queue.
-	musicCodec, err := codec.CreateNamed(settings.Transport.Codec, 48000, 2, 0)
+	musicCodec, err := codec.CreateNamed(settings.Transport.Codec, 48000, 2, codec.LC3MusicNByte)
 	if err != nil {
 		return nil, fmt.Errorf("music codec: %w", err)
 	}

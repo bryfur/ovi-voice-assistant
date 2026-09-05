@@ -81,8 +81,10 @@ func absInt(x int) int {
 	return x
 }
 
-// Create builds a codec instance. nbyte is the per-channel LC3 encoded frame
-// size; 0 selects the default and it is ignored for other codecs.
+// Create builds a codec instance. nbyte is the encoded bytes per channel
+// per 10 ms (bitrate = nbyte × 800 bps per channel); 0 selects the voice
+// default. LC3 uses it as its frame size; Opus derives its bitrate from it
+// and switches to audio mode. PCM ignores it.
 func Create(codecType CodecType, sampleRate, channels, nbyte int) (AudioCodec, error) {
 	if channels <= 0 {
 		channels = 1
@@ -106,7 +108,7 @@ func Create(codecType CodecType, sampleRate, channels, nbyte int) (AudioCodec, e
 			slog.Warn("Opus does not support requested rate, using nearest valid rate",
 				"requested", sampleRate, "using", valid)
 		}
-		return NewOpusCodec(valid, channels)
+		return NewOpusCodec(valid, channels, nbyte)
 	}
 	return nil, fmt.Errorf("unknown codec: %q", codecType)
 }

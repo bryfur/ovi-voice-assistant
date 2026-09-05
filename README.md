@@ -22,7 +22,7 @@ ESPHome Device (speaker)   ◄── encoded audio ◄────────�
 - **Agent**: the official OpenAI Go SDK against any OpenAI-compatible endpoint (OpenAI, ollama, vLLM, LM Studio, …). Supports MCP tools and sub-agents.
 - **TTS**: [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) 82M int8 (default) or [Piper](https://github.com/rhasspy/piper) voices, local via sherpa-onnx.
 - **Transport**: WiFi (plain TCP) or BLE (GATT). Audio codecs: PCM, LC3, Opus.
-- **Music**: YouTube Music, plus Spotify and Apple Music through a browser window. Multi-room synchronized playback.
+- **Music**: YouTube Music, plus Spotify and Apple Music through a browser window. Plays at 48 kHz stereo (LC3 at 48 kbps per channel, Opus at 96 kbps) while voice stays at 24 kHz mono. Multi-room synchronized playback.
 - **Automations**: Cron-based proactive announcements.
 
 ## Supported devices

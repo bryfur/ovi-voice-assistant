@@ -81,6 +81,19 @@ func TestCreateOpusSnapsRate(t *testing.T) {
 	}
 }
 
+func TestCreateMusicSettings(t *testing.T) {
+	lc3, err := Create(LC3, 48000, 2, LC3MusicNByte)
+	if err != nil || lc3.EncodedFrameBytes() != 60 || lc3.Channels() != 2 {
+		t.Fatalf("lc3 music: %+v, %v", lc3, err)
+	}
+
+	op, err := Create(Opus, 48000, 2, LC3MusicNByte)
+
+	if err != nil || op.(*OpusCodec).Bitrate() != 96000 {
+		t.Fatalf("opus music: %v, %v", op, err)
+	}
+}
+
 func TestCreateNamedUnknown(t *testing.T) {
 	_, err := CreateNamed("flac", 16000, 1, 0)
 

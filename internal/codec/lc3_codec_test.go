@@ -59,8 +59,11 @@ func TestLC3StereoWireFrameSize(t *testing.T) {
 
 	enc, err := c.Encode(pcm)
 
-	if err != nil || len(enc) != c.EncodedFrameBytes()*2 {
-		t.Fatalf("stereo Encode = %d bytes, %v", len(enc), err)
+	if err != nil || len(enc) != 120 || c.EncodedFrameBytes() != LC3MusicNByte {
+		t.Fatalf("stereo music Encode = %d bytes (per channel %d), %v", len(enc), c.EncodedFrameBytes(), err)
+	}
+	if dec, err := c.Decode(enc); err != nil || len(dec) != c.PCMFrameBytes() {
+		t.Fatalf("stereo music Decode = %d bytes, %v", len(dec), err)
 	}
 }
 

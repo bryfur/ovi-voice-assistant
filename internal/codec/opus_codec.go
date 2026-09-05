@@ -10,7 +10,7 @@ import (
 
 const (
 	OpusFrameDurationMs  = 20
-	OpusMaxEncodedBytes  = 80   // reasonable max at ~32kbps for 20ms VBR
+	OpusMaxEncodedBytes  = 80   // typical max for a 20 ms VoIP frame (informational)
 	opusEncodeBufferSize = 4000 // upper bound for a single packet
 )
 
@@ -19,20 +19,32 @@ type OpusCodec struct {
 	sampleRate   int
 	channels     int
 	frameSamples int
+	frameBytes   int // per channel per frame, informational
 
 	mu  sync.Mutex
 	enc *opus.Encoder
 	dec *opus.Decoder
 }
 
-// NewOpusCodec creates an Opus codec in VoIP mode.
-func NewOpusCodec(sampleRate, channels int) (*OpusCodec, error) {
+// NewOpusCodec creates an Opus codec. nbyte = 0 is VoIP mode at the
+// library's default bitrate; otherwise audio mode at nbyte × 800 bps per
+// channel (nbyte is bytes per channel per 10 ms).
+func NewOpusCodec(sampleRate, channels, nbyte int) (*OpusCodec, error) {
 	if channels <= 0 {
 		channels = 1
 	}
-	enc, err := opus.NewEncoder(sampleRate, channels, opus.AppVoIP)
+	app, frameBytes := opus.AppVoIP, OpusMaxEncodedBytes
+	if nbyte > 0 {
+		app, frameBytes = opus.AppAudio, nbyte*OpusFrameDurationMs/10
+	}
+	enc, err := opus.NewEncoder(sampleRate, channels, app)
 	if err != nil {
 		return nil, fmt.Errorf("opus encoder: %w", err)
+	}
+	if nbyte > 0 {
+		if err := enc.SetBitrate(nbyte * 800 * channels); err != nil {
+			return nil, fmt.Errorf("opus bitrate: %w", err)
+		}
 	}
 	dec, err := opus.NewDecoder(sampleRate, channels)
 	if err != nil {
@@ -42,9 +54,16 @@ func NewOpusCodec(sampleRate, channels int) (*OpusCodec, error) {
 		sampleRate:   sampleRate,
 		channels:     channels,
 		frameSamples: sampleRate * OpusFrameDurationMs / 1000,
+		frameBytes:   frameBytes,
 		enc:          enc,
 		dec:          dec,
 	}, nil
+}
+
+// Bitrate returns the encoder's configured bitrate in bps.
+func (c *OpusCodec) Bitrate() int {
+	b, _ := c.enc.Bitrate()
+	return b
 }
 
 func (c *OpusCodec) Type() CodecType        { return Opus }
@@ -53,7 +72,7 @@ func (c *OpusCodec) SampleRate() int        { return c.sampleRate }
 func (c *OpusCodec) Channels() int          { return c.channels }
 func (c *OpusCodec) FrameDurationMs() int   { return OpusFrameDurationMs }
 func (c *OpusCodec) PCMFrameBytes() int     { return c.frameSamples * c.channels * 2 }
-func (c *OpusCodec) EncodedFrameBytes() int { return OpusMaxEncodedBytes } // VBR upper bound
+func (c *OpusCodec) EncodedFrameBytes() int { return c.frameBytes } // VBR; informational
 
 // Encode encodes one 20ms PCM frame.
 func (c *OpusCodec) Encode(pcm []byte) ([]byte, error) {
