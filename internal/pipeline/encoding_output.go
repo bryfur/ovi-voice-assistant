@@ -62,6 +62,9 @@ type EncodingOutput struct {
 	Sleep func(ctx context.Context, d time.Duration)
 	// Now is the clock; tests may replace it.
 	Now func() time.Time
+	// OnAudioConfig, if set, is called with the codec each time AUDIO_CONFIG
+	// is sent to the device (before TTS_START).
+	OnAudioConfig func(codec.AudioCodec)
 }
 
 // NewEncodingOutput creates an output for a transport and codec.
@@ -152,6 +155,9 @@ func (o *EncodingOutput) run(queue chan outputItem, stop chan struct{}, done cha
 				err = ErrOutputReset
 			} else {
 				if item.event == transport.EventTTSStart {
+					if o.OnAudioConfig != nil {
+						o.OnAudioConfig(o.codec)
+					}
 					cfg := transport.AudioConfig{
 						SampleRate:        uint32(o.codec.SampleRate()),
 						EncodedFrameBytes: uint16(o.codec.EncodedFrameBytes()),

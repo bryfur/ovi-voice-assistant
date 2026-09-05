@@ -94,6 +94,21 @@ func TestCreateMusicSettings(t *testing.T) {
 	}
 }
 
+func TestDescribe(t *testing.T) {
+	lc3, _ := Create(LC3, 48000, 2, LC3MusicNByte)
+	op, _ := Create(Opus, 24000, 1, 0)
+
+	if got := Describe(lc3); got != "lc3 48000Hz 2ch 10ms 60B/ch 48kbps/ch" {
+		t.Fatalf("lc3: %q", got)
+	}
+	if got := Describe(NewPCMCodec(24000, 1)); got != "pcm 24000Hz 1ch 16-bit 20ms" {
+		t.Fatalf("pcm: %q", got)
+	}
+	if got := Describe(op); got != "opus 24000Hz 1ch 20ms 80B/ch 32kbps/ch" {
+		t.Fatalf("opus: %q", got)
+	}
+}
+
 func TestCreateNamedUnknown(t *testing.T) {
 	_, err := CreateNamed("flac", 16000, 1, 0)
 

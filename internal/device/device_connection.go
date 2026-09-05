@@ -47,6 +47,7 @@ type DeviceConnection struct {
 
 	mu          sync.Mutex
 	micCodec    codec.AudioCodec // created when device sends MIC_CONFIG
+	lastSpeaker string           // last speaker config announced to the device
 	audioQueue  chan []byte
 	taskCancel  context.CancelFunc
 	taskDone    chan struct{}
@@ -72,7 +73,7 @@ func NewDeviceConnection(t transport.DeviceTransport, spkCodec codec.AudioCodec,
 	if name == "" {
 		name = t.String()
 	}
-	return &DeviceConnection{
+	c := &DeviceConnection{
 		Name:       name,
 		transport:  t,
 		spkCodec:   spkCodec,
@@ -83,6 +84,20 @@ func NewDeviceConnection(t transport.DeviceTransport, spkCodec codec.AudioCodec,
 		audioQueue: make(chan []byte, micQueueSize),
 		musicGroup: opts.MusicGroup,
 		SetupDelay: 500 * time.Millisecond,
+	}
+	c.output.OnAudioConfig = c.speakerConfig
+	return c
+}
+
+// speakerConfig logs the speaker settings whenever they change (voice ↔ music).
+func (c *DeviceConnection) speakerConfig(cd codec.AudioCodec) {
+	desc := codec.Describe(cd)
+	c.mu.Lock()
+	changed := desc != c.lastSpeaker
+	c.lastSpeaker = desc
+	c.mu.Unlock()
+	if changed {
+		slog.Info("Speaker audio config", "device", c.Name, "codec", desc)
 	}
 }
 
@@ -124,6 +139,7 @@ func (c *DeviceConnection) Stop() error {
 // setupDevice sends the speaker config and prepares the music path and
 // agent context.
 func (c *DeviceConnection) setupDevice() error {
+	c.speakerConfig(c.spkCodec)
 	if err := transport.SendAudioConfig(c.transport, transport.AudioConfig{
 		SampleRate:        uint32(c.spkCodec.SampleRate()),
 		EncodedFrameBytes: uint16(c.spkCodec.EncodedFrameBytes()),
@@ -148,6 +164,8 @@ func (c *DeviceConnection) setupDevice() error {
 		return fmt.Errorf("music codec: %w", err)
 	}
 	c.musicOutput = pipeline.NewEncodingOutput(c.transport, musicCodec)
+	c.musicOutput.OnAudioConfig = c.speakerConfig
+	slog.Info("Music audio config", "device", c.Name, "codec", codec.Describe(musicCodec))
 	if c.musicGroup != nil {
 		c.musicGroup.AddDevice(c.musicOutput, c.transport)
 	}
@@ -229,12 +247,12 @@ func (c *DeviceConnection) handleMicConfig(payload []byte) {
 	name := codec.NameForID(payload[6])
 
 	// Use the device's reported mic codec
-	mic, err := codec.Create(name, rate, 1, 0)
+	mic, err := codec.Create(name, rate, 1, nbyte)
 	if err != nil {
 		slog.Error("Cannot create mic codec", "codec", name, "err", err)
 		return
 	}
-	slog.Info("Device mic config", "codec", name, "rate", rate, "bytes_per_frame", nbyte)
+	slog.Info("Mic audio config (device)", "device", c.Name, "codec", codec.Describe(mic))
 
 	// If the server prefers a different mic codec, request it
 	preferred := c.settings.Transport.Codec
@@ -247,7 +265,7 @@ func (c *DeviceConnection) handleMicConfig(payload []byte) {
 			buf[6] = pref.ID()
 			if err := c.transport.SendEvent(transport.EventMicConfig, buf); err == nil {
 				mic = pref
-				slog.Info("Requested mic codec change", "codec", preferred, "rate", rate)
+				slog.Info("Mic audio config (requested)", "device", c.Name, "codec", codec.Describe(pref))
 			}
 		}
 	}

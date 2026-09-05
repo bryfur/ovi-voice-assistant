@@ -80,6 +80,19 @@ func TestTTSStartSendsAudioConfigFirst(t *testing.T) {
 	}
 }
 
+func TestTTSStartReportsAudioConfig(t *testing.T) {
+	o, _ := newOutput(t)
+	var seen []string
+	o.OnAudioConfig = func(c codec.AudioCodec) { seen = append(seen, codec.Describe(c)) }
+
+	o.SendEvent(context.Background(), transport.EventTTSStart, nil)
+	o.SendEvent(context.Background(), transport.EventTTSEnd, nil)
+
+	if len(seen) != 1 || seen[0] != "pcm 16000Hz 1ch 16-bit 20ms" {
+		t.Fatalf("seen = %v", seen)
+	}
+}
+
 func TestOtherEventsForwardedDirectly(t *testing.T) {
 	o, tr := newOutput(t)
 

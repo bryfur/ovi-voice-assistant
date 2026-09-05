@@ -122,6 +122,17 @@ func CreateNamed(name string, sampleRate, channels, nbyte int) (AudioCodec, erro
 	return Create(ct, sampleRate, channels, nbyte)
 }
 
+// Describe renders a codec's audio settings for logs, e.g.
+// "lc3 48000Hz 2ch 10ms 60B/ch 48kbps/ch".
+func Describe(c AudioCodec) string {
+	if c.Type() == PCM {
+		return fmt.Sprintf("pcm %dHz %dch 16-bit %dms", c.SampleRate(), c.Channels(), c.FrameDurationMs())
+	}
+	kbps := c.EncodedFrameBytes() * 8 / c.FrameDurationMs() // per channel
+	return fmt.Sprintf("%s %dHz %dch %dms %dB/ch %dkbps/ch",
+		c.Type(), c.SampleRate(), c.Channels(), c.FrameDurationMs(), c.EncodedFrameBytes(), kbps)
+}
+
 // NameForID maps a wire codec id to its name.
 func NameForID(id uint8) CodecType {
 	switch id {
