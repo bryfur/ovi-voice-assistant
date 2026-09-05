@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/bryfur/ovi-voice-assistant/internal/music"
-	"github.com/bryfur/ovi-voice-assistant/internal/scheduler"
 )
 
 // Context is what tools can reach during a run. One exists per device.
@@ -17,7 +16,7 @@ type Context struct {
 	Announce    func(text string) // speak on the device (fire-and-forget)
 	MusicPlayer *music.MusicPlayer
 	MusicGroup  *music.MusicGroup
-	Scheduler   *scheduler.Scheduler
+	Scheduler   *Scheduler
 
 	mu     sync.Mutex
 	timers map[string]*timer

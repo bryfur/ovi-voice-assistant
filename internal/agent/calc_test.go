@@ -24,16 +24,16 @@ func TestCalculate(t *testing.T) {
 	}
 
 	for expr, want := range cases {
-		got, err := Calculate(expr)
+		got, err := calculate(expr)
 
 		if err != nil || got != want {
-			t.Errorf("Calculate(%q) = %q, %v; want %q", expr, got, err, want)
+			t.Errorf("calculate(%q) = %q, %v; want %q", expr, got, err, want)
 		}
 	}
 }
 
 func TestCalculateTrig(t *testing.T) {
-	got, err := Calculate("sin(pi/2) + cos(0)")
+	got, err := calculate("sin(pi/2) + cos(0)")
 
 	if err != nil || got != "2" {
 		t.Fatalf("got %q, %v", got, err)
@@ -42,10 +42,10 @@ func TestCalculateTrig(t *testing.T) {
 
 func TestCalculateErrors(t *testing.T) {
 	for _, expr := range []string{"", "1 +", "foo(1)", "x.y", "1 / 0", "(1", "import os", "2 3"} {
-		_, err := Calculate(expr)
+		_, err := calculate(expr)
 
 		if err == nil {
-			t.Errorf("Calculate(%q) should fail", expr)
+			t.Errorf("calculate(%q) should fail", expr)
 		}
 	}
 }

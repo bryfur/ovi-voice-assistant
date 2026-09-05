@@ -3,29 +3,27 @@ package music
 import (
 	"context"
 	"encoding/binary"
+	"github.com/bryfur/ovi-voice-assistant/internal/device"
 	"log/slog"
 	"sync"
 	"time"
-
-	"github.com/bryfur/ovi-voice-assistant/internal/audio"
-	"github.com/bryfur/ovi-voice-assistant/internal/transport"
 )
 
-// SyncBufferMs is how far in the future to schedule playback start. It must
+// syncBufferMs is how far in the future to schedule playback start. It must
 // be large enough for audio to reach all devices and buffer.
-const SyncBufferMs = 500
+const syncBufferMs = 500
 
 // fanoutOutput sends the same PCM and events to multiple device outputs.
 type fanoutOutput struct {
-	outputs []audio.DeviceOutput
+	outputs []device.Speaker
 }
 
-func (f *fanoutOutput) SendEvent(ctx context.Context, event transport.EventType, payload []byte) error {
+func (f *fanoutOutput) SendEvent(ctx context.Context, event device.EventType, payload []byte) error {
 	var wg sync.WaitGroup
 	errs := make([]error, len(f.outputs))
 	for i, o := range f.outputs {
 		wg.Add(1)
-		go func(i int, o audio.DeviceOutput) {
+		go func(i int, o device.Speaker) {
 			defer wg.Done()
 			errs[i] = o.SendEvent(ctx, event, payload)
 		}(i, o)
@@ -44,7 +42,7 @@ func (f *fanoutOutput) SendAudio(ctx context.Context, pcm []byte) error {
 	errs := make([]error, len(f.outputs))
 	for i, o := range f.outputs {
 		wg.Add(1)
-		go func(i int, o audio.DeviceOutput) {
+		go func(i int, o device.Speaker) {
 			defer wg.Done()
 			errs[i] = o.SendAudio(ctx, pcm)
 		}(i, o)
@@ -71,8 +69,8 @@ type MusicGroup struct {
 	Player *MusicPlayer
 
 	mu         sync.Mutex
-	outputs    []audio.DeviceOutput
-	transports []transport.DeviceTransport
+	outputs    []device.Speaker
+	transports []device.Transport
 	cancel     context.CancelFunc
 	done       chan struct{}
 }
@@ -83,7 +81,7 @@ func NewMusicGroup(sampleRate, channels int, browsers map[string]BrowserMusic) *
 }
 
 // AddDevice registers a device's music output and transport.
-func (g *MusicGroup) AddDevice(output audio.DeviceOutput, t transport.DeviceTransport) {
+func (g *MusicGroup) AddDevice(output device.Speaker, t device.Transport) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.outputs = append(g.outputs, output)
@@ -123,14 +121,14 @@ func (g *MusicGroup) cancelTask() {
 
 func (g *MusicGroup) endAll(ctx context.Context) {
 	g.mu.Lock()
-	outputs := append([]audio.DeviceOutput(nil), g.outputs...)
+	outputs := append([]device.Speaker(nil), g.outputs...)
 	g.mu.Unlock()
 	for _, out := range outputs {
 		if err := out.Flush(ctx); err != nil {
 			slog.Debug("music flush failed", "err", err)
 			continue
 		}
-		if err := out.SendEvent(ctx, transport.EventTTSEnd, nil); err != nil {
+		if err := out.SendEvent(ctx, device.EventTTSEnd, nil); err != nil {
 			slog.Debug("music TTS_END failed", "err", err)
 		}
 	}
@@ -197,8 +195,8 @@ func (g *MusicGroup) startTask() {
 // streamAll streams music to all devices with synchronized start.
 func (g *MusicGroup) streamAll(ctx context.Context) {
 	g.mu.Lock()
-	outputs := append([]audio.DeviceOutput(nil), g.outputs...)
-	transports := append([]transport.DeviceTransport(nil), g.transports...)
+	outputs := append([]device.Speaker(nil), g.outputs...)
+	transports := append([]device.Transport(nil), g.transports...)
 	g.mu.Unlock()
 	fanout := &fanoutOutput{outputs: outputs}
 
@@ -207,20 +205,20 @@ func (g *MusicGroup) streamAll(ctx context.Context) {
 	}
 
 	// Send TTS_START (which also sends AUDIO_CONFIG) to all devices
-	if err := fanout.SendEvent(ctx, transport.EventTTSStart, nil); err != nil {
+	if err := fanout.SendEvent(ctx, device.EventTTSStart, nil); err != nil {
 		return
 	}
 
 	// Send SYNC_PLAY with a future NTP timestamp to all devices
-	targetMs := time.Now().UnixMilli() + SyncBufferMs
+	targetMs := time.Now().UnixMilli() + syncBufferMs
 	payload := make([]byte, 8)
 	binary.LittleEndian.PutUint64(payload, uint64(targetMs))
 	for _, t := range transports {
-		if err := t.SendEvent(transport.EventSyncPlay, payload); err != nil {
+		if err := t.SendEvent(device.EventSyncPlay, payload); err != nil {
 			slog.Error("Failed to send SYNC_PLAY", "err", err)
 		}
 	}
-	slog.Info("Sync playback scheduled", "target_ms", targetMs, "buffer_ms", SyncBufferMs, "devices", len(outputs))
+	slog.Info("Sync playback scheduled", "target_ms", targetMs, "buffer_ms", syncBufferMs, "devices", len(outputs))
 
 	err := g.Player.Stream(ctx, fanout)
 	// Use a fresh context for the tail: the stream context may be cancelled.
@@ -230,7 +228,7 @@ func (g *MusicGroup) streamAll(ctx context.Context) {
 		if ferr := out.Flush(tail); ferr != nil {
 			continue
 		}
-		_ = out.SendEvent(tail, transport.EventTTSEnd, nil)
+		_ = out.SendEvent(tail, device.EventTTSEnd, nil)
 	}
 	if err != nil && ctx.Err() == nil {
 		slog.Error("Group streaming error", "err", err)

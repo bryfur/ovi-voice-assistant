@@ -2,13 +2,13 @@ package pipeline
 
 import (
 	"context"
+	"github.com/bryfur/ovi-voice-assistant/internal/device"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/bryfur/ovi-voice-assistant/internal/agent"
-	"github.com/bryfur/ovi-voice-assistant/internal/transport"
 )
 
 // slowAgent streams one word every 100 ms.
@@ -36,7 +36,7 @@ func (o *timedOutput) SendAudio(ctx context.Context, pcm []byte) error {
 	return o.recordingOutput.SendAudio(ctx, pcm)
 }
 
-func (o *timedOutput) SendEvent(ctx context.Context, e transport.EventType, p []byte) error {
+func (o *timedOutput) SendEvent(ctx context.Context, e device.EventType, p []byte) error {
 	o.mu.Lock()
 	o.times = append(o.times, time.Since(o.start))
 	o.mu.Unlock()

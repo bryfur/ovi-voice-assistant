@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/bryfur/ovi-voice-assistant/internal/cli"
 	"log/slog"
 	"os"
 	"strings"
@@ -12,10 +13,6 @@ import (
 
 	"github.com/bryfur/ovi-voice-assistant/internal/agent"
 	"github.com/bryfur/ovi-voice-assistant/internal/config"
-	"github.com/bryfur/ovi-voice-assistant/internal/console"
-	"github.com/bryfur/ovi-voice-assistant/internal/discovery"
-	"github.com/bryfur/ovi-voice-assistant/internal/flash"
-	"github.com/bryfur/ovi-voice-assistant/internal/setup"
 )
 
 const usage = `Ovi — Open Voice Assistant.
@@ -82,15 +79,15 @@ func run(args []string) error {
 	case *scan:
 		return scanCmd()
 	case *flashCmd:
-		flash.Run(console.Default())
+		cli.Flash(cli.Stdio())
 		return nil
 	case *setupCmd:
-		_, err := setup.Run(console.Default(), "")
+		_, err := cli.Setup(cli.Stdio(), "")
 		return err
 	}
-	if config.NeedsSetup() && console.IsTerminal() {
+	if cli.NeedsSetup() && cli.IsTerminal() {
 		fmt.Print("No configuration found. Running first-time setup...\n\n")
-		if _, err := setup.Run(console.Default(), ""); err != nil {
+		if _, err := cli.Setup(cli.Stdio(), ""); err != nil {
 			return err
 		}
 		fmt.Println()
@@ -125,8 +122,8 @@ func setupLogging(debug, verbose bool) {
 }
 
 func genKeyCmd() error {
-	key := flash.GenerateKey()
-	path := config.SecretsPath
+	key := cli.GenerateKey()
+	path := cli.SecretsPath
 	data, err := os.ReadFile(path)
 	switch {
 	case err != nil:
@@ -146,7 +143,7 @@ func genKeyCmd() error {
 
 func scanCmd() error {
 	fmt.Println("Scanning for ESPHome devices (5s)...")
-	devices, err := discovery.DiscoverDevices(5 * time.Second)
+	devices, err := cli.DiscoverDevices(5 * time.Second)
 	if err != nil {
 		return err
 	}
@@ -154,9 +151,9 @@ func scanCmd() error {
 		fmt.Println("No devices found. Make sure your device is powered on and connected to WiFi.")
 		return nil
 	}
-	raw, _ := config.LoadRaw("")
+	raw, _ := cli.LoadConfigFile("")
 	configured := map[string]bool{}
-	for _, d := range config.RawDevices(raw) {
+	for _, d := range cli.RawDevices(raw) {
 		configured[strings.SplitN(d, ":", 2)[0]] = true
 	}
 	fmt.Printf("\nFound %d device(s):\n\n", len(devices))
@@ -170,10 +167,10 @@ func scanCmd() error {
 		}
 		fmt.Printf("  %d. %-28s %-18s %d%s\n", i+1, d.Name, d.IP, d.Port, tag)
 	}
-	if len(fresh) > 0 && console.IsTerminal() {
-		c := console.Default()
+	if len(fresh) > 0 && cli.IsTerminal() {
+		c := cli.Stdio()
 		if c.Confirm("\nAdd the new devices to config?", true) {
-			if err := config.AddDevicesToConfig(fresh, ""); err != nil {
+			if err := cli.AddDevicesToConfig(fresh, ""); err != nil {
 				return err
 			}
 			fmt.Printf("Added %s\nConfiguration saved to %s\n", strings.Join(fresh, ", "), config.ConfigPath())

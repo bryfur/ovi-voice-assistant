@@ -2,22 +2,21 @@ package music
 
 import (
 	"context"
+	"github.com/bryfur/ovi-voice-assistant/internal/device"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sync"
 	"testing"
-
-	"github.com/bryfur/ovi-voice-assistant/internal/transport"
 )
 
 type captureOutput struct {
 	mu     sync.Mutex
 	audio  [][]byte
-	events []transport.EventType
+	events []device.EventType
 }
 
-func (c *captureOutput) SendEvent(_ context.Context, e transport.EventType, _ []byte) error {
+func (c *captureOutput) SendEvent(_ context.Context, e device.EventType, _ []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.events = append(c.events, e)

@@ -3,7 +3,7 @@ package agent
 import "testing"
 
 func TestParseArgs(t *testing.T) {
-	args, err := ParseArgs(`{"a": 1, "b": "x", "c": true}`)
+	args, err := parseArgs(`{"a": 1, "b": "x", "c": true}`)
 
 	if err != nil || args.Int("a", 0) != 1 || args.String("b", "") != "x" || !args.Bool("c", false) {
 		t.Fatalf("got %v, %v", args, err)
@@ -14,10 +14,10 @@ func TestParseArgs(t *testing.T) {
 }
 
 func TestParseArgsEmptyAndInvalid(t *testing.T) {
-	if empty, err := ParseArgs(""); err != nil || len(empty) != 0 {
+	if empty, err := parseArgs(""); err != nil || len(empty) != 0 {
 		t.Fatalf("empty: %v, %v", empty, err)
 	}
-	if _, err := ParseArgs("{bad"); err == nil {
+	if _, err := parseArgs("{bad"); err == nil {
 		t.Fatal("expected error")
 	}
 }

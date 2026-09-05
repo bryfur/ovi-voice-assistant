@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/bryfur/ovi-voice-assistant/internal/device"
 	"log/slog"
 	"net"
 	"net/http"
@@ -17,12 +18,10 @@ import (
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/coder/websocket"
-
-	"github.com/bryfur/ovi-voice-assistant/internal/audio"
 )
 
-// ProfileRoot holds persistent browser profiles.
-var ProfileRoot = "~/.config/ovi"
+// profileRoot holds persistent browser profiles.
+var profileRoot = "~/.config/ovi"
 
 const captureJS = `
 async (wsPort) => {
@@ -77,14 +76,14 @@ async (wsPort) => {
 }
 `
 
-// BrowserSession is the shared machinery for streaming music via browser
+// browserSession is the shared machinery for streaming music via browser
 // tab audio capture.
 //
 // It launches Chromium (chromedp), navigates to a music service, captures
 // tab audio with getDisplayMedia, and streams s16le PCM over a local
 // WebSocket back to Go. Providers supply service-specific search / play
 // logic.
-type BrowserSession struct {
+type browserSession struct {
 	URL         string
 	ProfileName string
 
@@ -104,9 +103,9 @@ type BrowserSession struct {
 	browserChannels   int
 }
 
-// NewBrowserSession creates an unstarted session.
-func NewBrowserSession(url, profileName string, sampleRate int) *BrowserSession {
-	return &BrowserSession{
+// newBrowserSession creates an unstarted session.
+func newBrowserSession(url, profileName string, sampleRate int) *browserSession {
+	return &browserSession{
 		URL:               url,
 		ProfileName:       profileName,
 		sampleRate:        sampleRate,
@@ -118,7 +117,7 @@ func NewBrowserSession(url, profileName string, sampleRate int) *BrowserSession 
 
 // Start launches the browser, opens the music service and starts the
 // WebSocket audio bridge.
-func (b *BrowserSession) Start(ctx context.Context) error {
+func (b *browserSession) Start(ctx context.Context) error {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
@@ -128,7 +127,7 @@ func (b *BrowserSession) Start(ctx context.Context) error {
 	go func() { _ = b.httpServer.Serve(ln) }()
 	slog.Info("Audio bridge listening", "url", fmt.Sprintf("ws://127.0.0.1:%d", b.wsPort))
 
-	profile := filepath.Join(expandUser(ProfileRoot), b.ProfileName)
+	profile := filepath.Join(expandUser(profileRoot), b.ProfileName)
 	if err := os.MkdirAll(profile, 0o755); err != nil {
 		return err
 	}
@@ -157,7 +156,7 @@ func (b *BrowserSession) Start(ctx context.Context) error {
 }
 
 // Close shuts down the browser and WebSocket server.
-func (b *BrowserSession) Close() {
+func (b *browserSession) Close() {
 	if b.ctxCancel != nil {
 		b.ctxCancel()
 		b.ctxCancel = nil
@@ -176,7 +175,7 @@ func (b *BrowserSession) Close() {
 
 // Evaluate runs a JS function expression with JSON-encoded arguments and
 // decodes the awaited result into out (which may be nil).
-func (b *BrowserSession) Evaluate(ctx context.Context, fn string, out any, args ...any) error {
+func (b *browserSession) Evaluate(ctx context.Context, fn string, out any, args ...any) error {
 	if b.pageCtx == nil {
 		return errors.New("browser not started")
 	}
@@ -220,7 +219,7 @@ func joinStrings(parts []string, sep string) string {
 
 // StreamTrack plays a track (via play) in the browser and forwards captured
 // PCM to output until play returns.
-func (b *BrowserSession) StreamTrack(ctx context.Context, output audio.PipelineOutput, play func(ctx context.Context) error) error {
+func (b *browserSession) StreamTrack(ctx context.Context, output device.Output, play func(ctx context.Context) error) error {
 	if err := b.ensureCapture(ctx); err != nil {
 		return err
 	}
@@ -251,7 +250,7 @@ func (b *BrowserSession) StreamTrack(ctx context.Context, output audio.PipelineO
 	}
 }
 
-func (b *BrowserSession) drain() {
+func (b *browserSession) drain() {
 	for {
 		select {
 		case <-b.audioQueue:
@@ -261,7 +260,7 @@ func (b *BrowserSession) drain() {
 	}
 }
 
-func (b *BrowserSession) forwardPending(ctx context.Context, output audio.PipelineOutput) {
+func (b *browserSession) forwardPending(ctx context.Context, output device.Output) {
 	for {
 		select {
 		case data := <-b.audioQueue:
@@ -274,7 +273,7 @@ func (b *BrowserSession) forwardPending(ctx context.Context, output audio.Pipeli
 	}
 }
 
-func (b *BrowserSession) wsHandler(w http.ResponseWriter, r *http.Request) {
+func (b *browserSession) wsHandler(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {
 		return
@@ -322,7 +321,7 @@ func (b *BrowserSession) wsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (b *BrowserSession) ensureCapture(ctx context.Context) error {
+func (b *browserSession) ensureCapture(ctx context.Context) error {
 	b.mu.Lock()
 	active := b.captureActive
 	b.mu.Unlock()

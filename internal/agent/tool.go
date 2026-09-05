@@ -37,8 +37,8 @@ func (t Tool) Def() openai.ChatCompletionToolUnionParam {
 // Args holds decoded tool-call arguments.
 type Args map[string]any
 
-// ParseArgs decodes a JSON argument object; empty input yields no args.
-func ParseArgs(raw string) (Args, error) {
+// parseArgs decodes a JSON argument object; empty input yields no args.
+func parseArgs(raw string) (Args, error) {
 	if strings.TrimSpace(raw) == "" {
 		return Args{}, nil
 	}

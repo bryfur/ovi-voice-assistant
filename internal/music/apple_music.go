@@ -2,10 +2,9 @@ package music
 
 import (
 	"context"
+	"github.com/bryfur/ovi-voice-assistant/internal/device"
 	"log/slog"
 	"time"
-
-	"github.com/bryfur/ovi-voice-assistant/internal/audio"
 )
 
 const appleSearchJS = `
@@ -41,18 +40,18 @@ const applePlayJS = `
 })
 `
 
-// AppleMusic streams Apple Music via music.apple.com.
-type AppleMusic struct {
-	*BrowserSession
+// appleMusic streams Apple Music via music.apple.com.
+type appleMusic struct {
+	*browserSession
 }
 
-// NewAppleMusic creates an unstarted Apple Music provider.
-func NewAppleMusic(sampleRate int) *AppleMusic {
-	return &AppleMusic{NewBrowserSession("https://music.apple.com", "apple-music-profile", sampleRate)}
+// newAppleMusic creates an unstarted Apple Music provider.
+func newAppleMusic(sampleRate int) *appleMusic {
+	return &appleMusic{newBrowserSession("https://music.apple.com", "apple-music-profile", sampleRate)}
 }
 
 // Search implements BrowserMusic.
-func (a *AppleMusic) Search(ctx context.Context, query string, limit int) ([]MusicTrack, error) {
+func (a *appleMusic) Search(ctx context.Context, query string, limit int) ([]MusicTrack, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -71,14 +70,14 @@ func (a *AppleMusic) Search(ctx context.Context, query string, limit int) ([]Mus
 }
 
 // StreamTrack implements BrowserMusic.
-func (a *AppleMusic) StreamTrack(ctx context.Context, track MusicTrack, output audio.PipelineOutput) error {
-	return a.BrowserSession.StreamTrack(ctx, output, func(ctx context.Context) error {
+func (a *appleMusic) StreamTrack(ctx context.Context, track MusicTrack, output device.Output) error {
+	return a.browserSession.StreamTrack(ctx, output, func(ctx context.Context) error {
 		return a.Evaluate(ctx, applePlayJS, nil, track.SongID)
 	})
 }
 
 // StopPlayback implements BrowserMusic.
-func (a *AppleMusic) StopPlayback(ctx context.Context) error {
+func (a *appleMusic) StopPlayback(ctx context.Context) error {
 	if a.pageCtx == nil {
 		return nil
 	}
@@ -86,7 +85,7 @@ func (a *AppleMusic) StopPlayback(ctx context.Context) error {
 }
 
 // WaitForLogin polls until MusicKit reports an authorized user.
-func (a *AppleMusic) WaitForLogin(ctx context.Context) error {
+func (a *appleMusic) WaitForLogin(ctx context.Context) error {
 	ready := false
 	for i := 0; i < 10; i++ {
 		select {

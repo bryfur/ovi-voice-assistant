@@ -3,33 +3,32 @@ package music
 import (
 	"context"
 	"encoding/binary"
+	"github.com/bryfur/ovi-voice-assistant/internal/device"
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/bryfur/ovi-voice-assistant/internal/transport"
 )
 
 type fakeTransport struct {
 	mu     sync.Mutex
-	events []transport.EventType
+	events []device.EventType
 	sync   []int64
 }
 
-func (f *fakeTransport) Connect() error                                     { return nil }
-func (f *fakeTransport) Disconnect() error                                  { return nil }
-func (f *fakeTransport) SendAudio([]byte) error                             { return nil }
-func (f *fakeTransport) SetEventCallback(transport.EventCallback)           {}
-func (f *fakeTransport) SetAudioCallback(transport.AudioCallback)           {}
-func (f *fakeTransport) SetDisconnectCallback(transport.DisconnectCallback) {}
-func (f *fakeTransport) SetConnectCallback(transport.ConnectCallback)       {}
-func (f *fakeTransport) IsConnected() bool                                  { return true }
-func (f *fakeTransport) String() string                                     { return "fake" }
-func (f *fakeTransport) SendEvent(e transport.EventType, p []byte) error {
+func (f *fakeTransport) Connect() error                                  { return nil }
+func (f *fakeTransport) Disconnect() error                               { return nil }
+func (f *fakeTransport) SendAudio([]byte) error                          { return nil }
+func (f *fakeTransport) SetEventCallback(device.EventCallback)           {}
+func (f *fakeTransport) SetAudioCallback(device.AudioCallback)           {}
+func (f *fakeTransport) SetDisconnectCallback(device.DisconnectCallback) {}
+func (f *fakeTransport) SetConnectCallback(device.ConnectCallback)       {}
+func (f *fakeTransport) IsConnected() bool                               { return true }
+func (f *fakeTransport) String() string                                  { return "fake" }
+func (f *fakeTransport) SendEvent(e device.EventType, p []byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.events = append(f.events, e)
-	if e == transport.EventSyncPlay {
+	if e == device.EventSyncPlay {
 		f.sync = append(f.sync, int64(binary.LittleEndian.Uint64(p)))
 	}
 	return nil
@@ -59,7 +58,7 @@ func TestGroupResumeStreamsToAllDevicesWithSyncPlay(t *testing.T) {
 	g.cancelTask() // wait for the stream task to finish
 
 	for _, tr := range []*fakeTransport{tr1, tr2} {
-		if len(tr.sync) != 1 || tr.sync[0] < before+SyncBufferMs-50 {
+		if len(tr.sync) != 1 || tr.sync[0] < before+syncBufferMs-50 {
 			t.Fatalf("SYNC_PLAY missing or too early: %v", tr.sync)
 		}
 	}
@@ -67,11 +66,11 @@ func TestGroupResumeStreamsToAllDevicesWithSyncPlay(t *testing.T) {
 		// Play() first stops (TTS_END), then streaming sends TTS_START … TTS_END.
 		start := -1
 		for i, e := range out.events {
-			if e == transport.EventTTSStart {
+			if e == device.EventTTSStart {
 				start = i
 			}
 		}
-		if start < 0 || out.events[len(out.events)-1] != transport.EventTTSEnd || len(out.events) < start+2 {
+		if start < 0 || out.events[len(out.events)-1] != device.EventTTSEnd || len(out.events) < start+2 {
 			t.Fatalf("events = %v", out.events)
 		}
 	}
@@ -93,7 +92,7 @@ func TestGroupPauseAndStopEndPlaybackOnDevices(t *testing.T) {
 	if paused || g.Player.QueueLen() != 0 {
 		t.Fatalf("paused=%v queue=%d", paused, g.Player.QueueLen())
 	}
-	if len(out.events) < 2 || out.events[0] != transport.EventTTSEnd {
+	if len(out.events) < 2 || out.events[0] != device.EventTTSEnd {
 		t.Fatalf("events = %v", out.events)
 	}
 }
@@ -114,7 +113,7 @@ func TestFanoutSendsToAll(t *testing.T) {
 	f := &fanoutOutput{outputs: []audioDeviceOutput{out1, out2}}
 
 	f.SendAudio(context.Background(), []byte{1})
-	f.SendEvent(context.Background(), transport.EventTTSEnd, nil)
+	f.SendEvent(context.Background(), device.EventTTSEnd, nil)
 
 	if out1.totalBytes() != 1 || out2.totalBytes() != 1 || len(out1.events) != 1 || len(out2.events) != 1 {
 		t.Fatal("fanout incomplete")

@@ -97,7 +97,7 @@ func TestRunStreamedModelFailureSpeaksApology(t *testing.T) {
 
 	out, err := a.RunText(context.Background(), "x", nil)
 
-	if err != nil || out != FailureMessage {
+	if err != nil || out != failureMessage {
 		t.Fatalf("got %q, %v", out, err)
 	}
 }
@@ -118,14 +118,14 @@ func TestRunStreamedCancelledContextReturnsError(t *testing.T) {
 func TestMaxTurnsExceeded(t *testing.T) {
 	loop := turn{calls: []fakeCall{{"1", "flip_coin", "{}"}}}
 	var turns []turn
-	for range MaxTurns + 2 {
+	for range maxTurns + 2 {
 		turns = append(turns, loop)
 	}
 	a := newAssistant(t, newFakeOpenAI(t, turns...), nil)
 
 	out, _ := a.RunText(context.Background(), "x", &Context{})
 
-	if out != FailureMessage {
+	if out != failureMessage {
 		t.Fatalf("got %q", out)
 	}
 }
@@ -187,12 +187,12 @@ func TestParseSubAgentsFromFileAndValidation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agents.json")
 	os.WriteFile(path, []byte(`[{"name":"a","mcp_servers":[{"command":"npx","args":["x"]}]}]`), 0o644)
 
-	agents, err := ParseSubAgents("@" + path)
+	agents, err := parseSubAgents("@" + path)
 
 	if err != nil || len(agents) != 1 || len(agents[0].MCPServers) != 1 {
 		t.Fatalf("got %+v, %v", agents, err)
 	}
-	if _, err := ParseSubAgents(`[{"description":"no name"}]`); err == nil {
+	if _, err := parseSubAgents(`[{"description":"no name"}]`); err == nil {
 		t.Fatal("expected error for missing name")
 	}
 }

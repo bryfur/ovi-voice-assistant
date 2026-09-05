@@ -21,14 +21,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// EnvPrefix is the prefix for all environment variable overrides.
-const EnvPrefix = "OVI_"
+// envPrefix is the prefix for all environment variable overrides.
+const envPrefix = "OVI_"
 
-// DefaultDevicePort is the TCP port the ESPHome component listens on.
-const DefaultDevicePort = 6055
+// defaultDevicePort is the TCP port the ESPHome component listens on.
+const defaultDevicePort = 6055
 
-// ConfigDir returns ~/.ovi.
-func ConfigDir() string {
+// configDir returns ~/.ovi.
+func configDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = "."
@@ -38,7 +38,7 @@ func ConfigDir() string {
 
 // ConfigPath returns ~/.ovi/config.yaml.
 func ConfigPath() string {
-	return filepath.Join(ConfigDir(), "config.yaml")
+	return filepath.Join(configDir(), "config.yaml")
 }
 
 // CacheDir returns ~/.cache/ovi.
@@ -79,7 +79,7 @@ func ParseDevices(raw string) ([]DeviceConfig, error) {
 			continue
 		}
 		parts := strings.SplitN(entry, ":", 3)
-		dev := DeviceConfig{Host: parts[0], Port: DefaultDevicePort}
+		dev := DeviceConfig{Host: parts[0], Port: defaultDevicePort}
 		if len(parts) > 1 && parts[1] != "" {
 			port, err := strconv.Atoi(parts[1])
 			if err != nil {
@@ -316,7 +316,7 @@ func applyEnv(s *Settings, env map[string]string) error {
 				if subTag == "" {
 					continue
 				}
-				name := EnvPrefix + strings.ToUpper(tag) + "__" + strings.ToUpper(subTag)
+				name := envPrefix + strings.ToUpper(tag) + "__" + strings.ToUpper(subTag)
 				if val, ok := env[name]; ok {
 					if err := setField(f.Field(j), val); err != nil {
 						return fmt.Errorf("%s: %w", name, err)
@@ -325,7 +325,7 @@ func applyEnv(s *Settings, env map[string]string) error {
 			}
 			continue
 		}
-		name := EnvPrefix + strings.ToUpper(tag)
+		name := envPrefix + strings.ToUpper(tag)
 		if val, ok := env[name]; ok {
 			if err := setField(f, val); err != nil {
 				return fmt.Errorf("%s: %w", name, err)

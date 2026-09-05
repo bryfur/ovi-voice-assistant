@@ -12,8 +12,8 @@ import (
 	"github.com/bryfur/ovi-voice-assistant/internal/music"
 )
 
-// BuiltinTools returns the built-in tools for the voice assistant.
-func BuiltinTools() []Tool {
+// builtinTools returns the built-in tools for the voice assistant.
+func builtinTools() []Tool {
 	return []Tool{
 		{
 			Name:        "get_current_time",
@@ -227,7 +227,7 @@ func toolCancelTimer(_ context.Context, actx *Context, args Args) (string, error
 // -- Math --
 
 func toolCalculate(_ context.Context, _ *Context, args Args) (string, error) {
-	result, err := Calculate(args.String("expression", ""))
+	result, err := calculate(args.String("expression", ""))
 	if err != nil {
 		return "Error: " + err.Error(), nil
 	}

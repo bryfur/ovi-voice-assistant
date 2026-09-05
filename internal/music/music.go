@@ -13,8 +13,8 @@ var (
 	browsers   = map[string]BrowserMusic{}
 )
 
-// RegisterBrowser registers a browser music provider.
-func RegisterBrowser(service string, b BrowserMusic) {
+// registerBrowser registers a browser music provider.
+func registerBrowser(service string, b BrowserMusic) {
 	browsersMu.Lock()
 	defer browsersMu.Unlock()
 	browsers[service] = b
@@ -34,23 +34,23 @@ func Browsers() map[string]BrowserMusic {
 
 // SearchMusicFunc is the search implementation used by the play_music tool.
 // Tests may replace it.
-var SearchMusicFunc = SearchMusic
+var SearchMusicFunc = searchMusic
 
 // StartServices launches and registers the configured browser providers
 // ("spotify", "apple"). Apple Music login is awaited in the background.
 // The returned func shuts them down.
 func StartServices(ctx context.Context, names []string, sampleRate int) func() {
-	var sessions []*BrowserSession
+	var sessions []*browserSession
 	for _, name := range names {
 		var b BrowserMusic
-		var session *BrowserSession
+		var session *browserSession
 		switch name {
 		case "spotify":
-			s := NewSpotifyMusic(sampleRate)
-			b, session = s, s.BrowserSession
+			s := newSpotifyMusic(sampleRate)
+			b, session = s, s.browserSession
 		case "apple":
-			a := NewAppleMusic(sampleRate)
-			b, session = a, a.BrowserSession
+			a := newAppleMusic(sampleRate)
+			b, session = a, a.browserSession
 			defer func() { go func() { _ = a.WaitForLogin(ctx) }() }()
 		default:
 			slog.Warn("Unknown music service", "name", name)
@@ -60,7 +60,7 @@ func StartServices(ctx context.Context, names []string, sampleRate int) func() {
 			slog.Error("Music service failed to start", "name", name, "err", err)
 			continue
 		}
-		RegisterBrowser(name, b)
+		registerBrowser(name, b)
 		sessions = append(sessions, session)
 		slog.Info("Music service ready", "name", name)
 	}
@@ -71,8 +71,8 @@ func StartServices(ctx context.Context, names []string, sampleRate int) func() {
 	}
 }
 
-// SearchMusic searches for music; service selects the provider.
-func SearchMusic(ctx context.Context, query, service string) ([]MusicTrack, error) {
+// searchMusic searches for music; service selects the provider.
+func searchMusic(ctx context.Context, query, service string) ([]MusicTrack, error) {
 	if service == "" {
 		service = "youtube"
 	}
@@ -83,7 +83,7 @@ func SearchMusic(ctx context.Context, query, service string) ([]MusicTrack, erro
 		return b.Search(ctx, query, 20)
 	}
 	if service == "youtube" {
-		return SearchYouTube(ctx, query, 20)
+		return searchYouTube(ctx, query, 20)
 	}
 	available := []string{"youtube"}
 	for k := range Browsers() {

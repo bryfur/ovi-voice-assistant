@@ -4,19 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/bryfur/ovi-voice-assistant/internal/device"
 	"io"
 	"log/slog"
 	"os/exec"
 	"strconv"
 	"sync"
-
-	"github.com/bryfur/ovi-voice-assistant/internal/audio"
 )
 
 // BrowserMusic is a browser-based music provider (Spotify, Apple Music).
 type BrowserMusic interface {
 	Search(ctx context.Context, query string, limit int) ([]MusicTrack, error)
-	StreamTrack(ctx context.Context, track MusicTrack, output audio.PipelineOutput) error
+	StreamTrack(ctx context.Context, track MusicTrack, output device.Output) error
 	StopPlayback(ctx context.Context) error
 }
 
@@ -54,7 +53,7 @@ func NewMusicPlayer(sampleRate, channels int, browsers map[string]BrowserMusic) 
 		channels:   channels,
 		browsers:   browsers,
 		FFmpegPath: "ffmpeg",
-		ExtractURL: ExtractAudioURL,
+		ExtractURL: extractAudioURL,
 	}
 }
 
@@ -140,7 +139,7 @@ func (p *MusicPlayer) GetCurrent() *MusicTrack {
 
 // Stream plays tracks starting at the current index until the queue ends
 // or ctx is cancelled.
-func (p *MusicPlayer) Stream(ctx context.Context, output audio.PipelineOutput) error {
+func (p *MusicPlayer) Stream(ctx context.Context, output device.Output) error {
 	for {
 		p.mu.Lock()
 		if !p.active || p.currentIndex >= len(p.queue) {
@@ -165,7 +164,7 @@ func (p *MusicPlayer) Stream(ctx context.Context, output audio.PipelineOutput) e
 }
 
 // streamTrack streams a track via browser capture or yt-dlp + ffmpeg.
-func (p *MusicPlayer) streamTrack(ctx context.Context, output audio.PipelineOutput, track MusicTrack) error {
+func (p *MusicPlayer) streamTrack(ctx context.Context, output device.Output, track MusicTrack) error {
 	if browser, ok := p.browsers[track.Service]; ok {
 		return browser.StreamTrack(ctx, track, output)
 	}

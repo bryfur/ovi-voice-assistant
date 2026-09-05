@@ -1,8 +1,9 @@
 package music
 
-import "github.com/bryfur/ovi-voice-assistant/internal/audio"
+import "github.com/bryfur/ovi-voice-assistant/internal/device"
 
-// audioOutput keeps the fake browser's signature readable.
-type audioOutput = audio.PipelineOutput
-
-type audioDeviceOutput = audio.DeviceOutput
+// Short names for the device output interfaces used by the fakes.
+type (
+	audioOutput       = device.Output
+	audioDeviceOutput = device.Speaker
+)

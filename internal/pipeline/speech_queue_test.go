@@ -8,7 +8,7 @@ import (
 
 func TestSubmitPlaysText(t *testing.T) {
 	out := &recordingOutput{}
-	q := NewSpeechQueue(context.Background(), &slowTTS{}, out)
+	q := newSpeechQueue(context.Background(), &slowTTS{}, out)
 
 	err := <-q.Submit("Hello world.")
 	q.Stop()
@@ -19,7 +19,7 @@ func TestSubmitPlaysText(t *testing.T) {
 }
 
 func TestSubmitReturnsBeforePlayback(t *testing.T) {
-	q := NewSpeechQueue(context.Background(), &slowTTS{delay: 50 * time.Millisecond}, &recordingOutput{})
+	q := newSpeechQueue(context.Background(), &slowTTS{delay: 50 * time.Millisecond}, &recordingOutput{})
 
 	start := time.Now()
 	done := q.Submit("Slow sentence here.")
@@ -34,7 +34,7 @@ func TestSubmitReturnsBeforePlayback(t *testing.T) {
 
 func TestSubmissionsPlayInOrder(t *testing.T) {
 	out := &recordingOutput{}
-	q := NewSpeechQueue(context.Background(), &slowTTS{delay: 5 * time.Millisecond}, out)
+	q := newSpeechQueue(context.Background(), &slowTTS{delay: 5 * time.Millisecond}, out)
 
 	q.Submit("First sentence here.")
 	q.Submit("Second sentence here.")
@@ -48,7 +48,7 @@ func TestSubmissionsPlayInOrder(t *testing.T) {
 
 func TestStopDrainsAndRejectsLater(t *testing.T) {
 	out := &recordingOutput{}
-	q := NewSpeechQueue(context.Background(), &slowTTS{delay: 10 * time.Millisecond}, out)
+	q := newSpeechQueue(context.Background(), &slowTTS{delay: 10 * time.Millisecond}, out)
 	q.Submit("Something to say here.")
 
 	q.Stop()

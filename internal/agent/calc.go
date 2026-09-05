@@ -9,10 +9,10 @@ import (
 	"unicode"
 )
 
-// Calculate evaluates a math expression supporting + - * / % **, parentheses,
+// calculate evaluates a math expression supporting + - * / % **, parentheses,
 // and the functions sqrt, abs, round, sin, cos, tan, log, log10, log2, ceil,
 // floor plus the constants pi and e.
-func Calculate(expr string) (string, error) {
+func calculate(expr string) (string, error) {
 	p := &calcParser{src: []rune(expr)}
 	p.skipSpace()
 	if p.eof() {

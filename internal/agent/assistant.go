@@ -16,30 +16,29 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 
 	"github.com/bryfur/ovi-voice-assistant/internal/config"
-	"github.com/bryfur/ovi-voice-assistant/internal/mcp"
 )
 
-// MaxTurns bounds the tool-calling loop per user input.
-const MaxTurns = 10
+// maxTurns bounds the tool-calling loop per user input.
+const maxTurns = 10
 
-// FailureMessage is spoken when the model call fails.
-const FailureMessage = "Sorry, I could not process that."
+// failureMessage is spoken when the model call fails.
+const failureMessage = "Sorry, I could not process that."
 
 // LevelTrace logs every streamed LLM chunk; enabled by `ovi --verbose`.
 const LevelTrace = slog.LevelDebug - 4
 
 // SubAgent is a nested agent exposed to the main agent as a tool.
 type SubAgent struct {
-	Name         string             `json:"name"`
-	Description  string             `json:"description"`
-	Instructions string             `json:"instructions"`
-	MCPServers   []mcp.ServerConfig `json:"mcp_servers"`
+	Name         string      `json:"name"`
+	Description  string      `json:"description"`
+	Instructions string      `json:"instructions"`
+	MCPServers   []MCPServer `json:"mcp_servers"`
 
-	servers []*mcp.Client
+	servers []*mcpClient
 }
 
-// ParseSubAgents parses a JSON array of sub-agents, or "@path" to a file.
-func ParseSubAgents(raw string) ([]*SubAgent, error) {
+// parseSubAgents parses a JSON array of sub-agents, or "@path" to a file.
+func parseSubAgents(raw string) ([]*SubAgent, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil
@@ -73,7 +72,7 @@ type Assistant struct {
 	reqOpts []option.RequestOption // per-request extras, e.g. thinking off
 
 	tools   []Tool // builtins + sub-agents
-	mcp     []*mcp.Client
+	mcp     []*mcpClient
 	subs    []*SubAgent
 	mu      sync.Mutex
 	history messages
@@ -101,21 +100,21 @@ func (a *Assistant) Load() error {
 			option.WithJSONSet("think", false))
 	}
 
-	servers, err := mcp.ParseServers(a.cfg.MCPServers)
+	servers, err := parseMCPServers(a.cfg.MCPServers)
 	if err != nil {
 		return err
 	}
 	a.mcp = nil
 	for _, s := range servers {
-		a.mcp = append(a.mcp, mcp.NewClient(s))
+		a.mcp = append(a.mcp, newMCPClient(s))
 	}
-	if a.subs, err = ParseSubAgents(a.cfg.Agents); err != nil {
+	if a.subs, err = parseSubAgents(a.cfg.Agents); err != nil {
 		return err
 	}
-	a.tools = BuiltinTools()
+	a.tools = builtinTools()
 	for _, sub := range a.subs {
 		for _, s := range sub.MCPServers {
-			sub.servers = append(sub.servers, mcp.NewClient(s))
+			sub.servers = append(sub.servers, newMCPClient(s))
 		}
 		a.tools = append(a.tools, a.subAgentTool(sub))
 	}
@@ -123,8 +122,8 @@ func (a *Assistant) Load() error {
 	return nil
 }
 
-func (a *Assistant) allMCP() []*mcp.Client {
-	all := append([]*mcp.Client(nil), a.mcp...)
+func (a *Assistant) allMCP() []*mcpClient {
+	all := append([]*mcpClient(nil), a.mcp...)
 	for _, sub := range a.subs {
 		all = append(all, sub.servers...)
 	}
@@ -165,7 +164,7 @@ func (a *Assistant) RunText(ctx context.Context, text string, actx *Context) (st
 }
 
 // RunStreamed runs the agent with session history, invoking onToken for
-// each content token. Model failures are spoken as FailureMessage; only
+// each content token. Model failures are spoken as failureMessage; only
 // context cancellation is returned as an error.
 func (a *Assistant) RunStreamed(ctx context.Context, text string, actx *Context, onToken func(string)) error {
 	a.mu.Lock()
@@ -181,7 +180,7 @@ func (a *Assistant) RunStreamed(ctx context.Context, text string, actx *Context,
 		}
 		slog.Error("Agent call failed", "err", err)
 		if onToken != nil {
-			onToken(FailureMessage)
+			onToken(failureMessage)
 		}
 	}
 	a.mu.Lock()
@@ -194,7 +193,7 @@ func (a *Assistant) RunStreamed(ctx context.Context, text string, actx *Context,
 // answers without calling a tool.
 func (a *Assistant) loop(ctx context.Context, msgs *messages, defs []openai.ChatCompletionToolUnionParam,
 	handlers map[string]Handler, actx *Context, onToken func(string)) error {
-	for range MaxTurns {
+	for range maxTurns {
 		params := openai.ChatCompletionNewParams{Model: shared.ChatModel(a.cfg.Model), Messages: *msgs}
 		if len(defs) > 0 {
 			params.Tools = defs
@@ -252,7 +251,7 @@ func (a *Assistant) loop(ctx context.Context, msgs *messages, defs []openai.Chat
 			*msgs = append(*msgs, openai.ToolMessage(result, call.ID))
 		}
 	}
-	return fmt.Errorf("max turns (%d) exceeded", MaxTurns)
+	return fmt.Errorf("max turns (%d) exceeded", maxTurns)
 }
 
 func (a *Assistant) call(ctx context.Context, handlers map[string]Handler, actx *Context, name, rawArgs string) string {
@@ -260,7 +259,7 @@ func (a *Assistant) call(ctx context.Context, handlers map[string]Handler, actx 
 	if !ok {
 		return "Error: unknown tool '" + name + "'"
 	}
-	args, err := ParseArgs(rawArgs)
+	args, err := parseArgs(rawArgs)
 	if err != nil {
 		return "Error: " + err.Error()
 	}
@@ -280,7 +279,7 @@ func (a *Assistant) call(ctx context.Context, handlers map[string]Handler, actx 
 
 // toolset builds the model-visible definitions and handler map for a set
 // of tools and MCP servers. First definition of a name wins.
-func (a *Assistant) toolset(tools []Tool, servers []*mcp.Client) ([]openai.ChatCompletionToolUnionParam, map[string]Handler) {
+func (a *Assistant) toolset(tools []Tool, servers []*mcpClient) ([]openai.ChatCompletionToolUnionParam, map[string]Handler) {
 	var defs []openai.ChatCompletionToolUnionParam
 	handlers := map[string]Handler{}
 	add := func(t Tool) {

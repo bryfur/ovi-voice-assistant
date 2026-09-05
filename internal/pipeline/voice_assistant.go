@@ -1,16 +1,17 @@
+// Package pipeline runs the voice pipeline for each connected device:
+// STT → Agent → TTS per utterance, serialized speech, one connection
+// state machine per device, and wake-word arbitration across devices.
 package pipeline
 
 import (
 	"context"
+	"github.com/bryfur/ovi-voice-assistant/internal/device"
+	"github.com/bryfur/ovi-voice-assistant/internal/speech"
 	"log/slog"
 	"strings"
 
 	"github.com/bryfur/ovi-voice-assistant/internal/agent"
-	"github.com/bryfur/ovi-voice-assistant/internal/audio"
 	"github.com/bryfur/ovi-voice-assistant/internal/config"
-	"github.com/bryfur/ovi-voice-assistant/internal/stt"
-	"github.com/bryfur/ovi-voice-assistant/internal/transport"
-	"github.com/bryfur/ovi-voice-assistant/internal/tts"
 )
 
 // Agent is the conversational surface the pipeline drives.
@@ -26,19 +27,19 @@ type Agent interface {
 // VoiceAssistant runs STT → Agent → TTS for one utterance. It works in
 // PCM; codec encoding is the caller's job.
 type VoiceAssistant struct {
-	STT   stt.STT
-	TTS   tts.TTS
+	STT   speech.STT
+	TTS   speech.TTS
 	Agent Agent
 }
 
 // New creates the pipeline with the configured providers; TTS outputs at
 // ttsRate.
 func New(s *config.Settings, ttsRate int) (*VoiceAssistant, error) {
-	st, err := stt.New(s.STT)
+	st, err := speech.NewSTT(s.STT)
 	if err != nil {
 		return nil, err
 	}
-	t, err := tts.New(s.TTS, ttsRate)
+	t, err := speech.NewTTS(s.TTS, ttsRate)
 	if err != nil {
 		return nil, err
 	}
@@ -71,15 +72,15 @@ func (v *VoiceAssistant) Stop(ctx context.Context) error {
 func (v *VoiceAssistant) ResetHistory() { v.Agent.ResetHistory() }
 
 // Run handles one utterance and reports whether a follow-up was requested.
-func (v *VoiceAssistant) Run(ctx context.Context, out audio.PipelineOutput, mic <-chan []byte, actx *agent.Context) bool {
-	transcript, err := v.STT.Listen(ctx, mic, func() { _ = out.SendEvent(ctx, transport.EventVADStart, nil) })
+func (v *VoiceAssistant) Run(ctx context.Context, out device.Output, mic <-chan []byte, actx *agent.Context) bool {
+	transcript, err := v.STT.Listen(ctx, mic, func() { _ = out.SendEvent(ctx, device.EventVADStart, nil) })
 	if err != nil {
 		return v.fail(ctx, out, err)
 	}
-	_ = out.SendEvent(ctx, transport.EventMicStop, nil)
+	_ = out.SendEvent(ctx, device.EventMicStop, nil)
 	if transcript == "" {
 		slog.Info("No speech detected")
-		_ = out.SendEvent(ctx, transport.EventError, []byte("stt-no-text\x00No speech detected"))
+		_ = out.SendEvent(ctx, device.EventError, []byte("stt-no-text\x00No speech detected"))
 		return false
 	}
 	slog.Info("User said", "text", transcript)
@@ -98,44 +99,44 @@ func (v *VoiceAssistant) Run(ctx context.Context, out audio.PipelineOutput, mic 
 		})
 	}()
 
-	speech := NewSpeechQueue(ctx, v.TTS, out)
-	_ = out.SendEvent(ctx, transport.EventTTSStart, nil)
-	err = <-speech.SubmitStream(tokens)
-	speech.Stop()
+	queue := newSpeechQueue(ctx, v.TTS, out)
+	_ = out.SendEvent(ctx, device.EventTTSStart, nil)
+	err = <-queue.SubmitStream(tokens)
+	queue.Stop()
 	if aerr := <-agentErr; err == nil {
 		err = aerr
 	}
 	if err != nil {
 		return v.fail(ctx, out, err)
 	}
-	_ = out.SendEvent(ctx, transport.EventTTSEnd, nil)
+	_ = out.SendEvent(ctx, device.EventTTSEnd, nil)
 
-	followUp := strings.Contains(sb.String(), tts.ListenToken)
+	followUp := strings.Contains(sb.String(), speech.ListenToken)
 	if followUp {
-		_ = out.SendEvent(ctx, transport.EventContinue, nil)
+		_ = out.SendEvent(ctx, device.EventContinue, nil)
 	}
 	slog.Info("Pipeline complete", "follow_up", followUp)
 	return followUp
 }
 
 // Announce speaks text on the device.
-func (v *VoiceAssistant) Announce(ctx context.Context, out audio.PipelineOutput, text string) {
-	speech := NewSpeechQueue(ctx, v.TTS, out)
-	_ = out.SendEvent(ctx, transport.EventTTSStart, nil)
-	err := <-speech.Submit(text)
-	speech.Stop()
+func (v *VoiceAssistant) Announce(ctx context.Context, out device.Output, text string) {
+	queue := newSpeechQueue(ctx, v.TTS, out)
+	_ = out.SendEvent(ctx, device.EventTTSStart, nil)
+	err := <-queue.Submit(text)
+	queue.Stop()
 	if err != nil {
 		v.fail(ctx, out, err)
 		return
 	}
-	_ = out.SendEvent(ctx, transport.EventTTSEnd, nil)
+	_ = out.SendEvent(ctx, device.EventTTSEnd, nil)
 }
 
-func (v *VoiceAssistant) fail(ctx context.Context, out audio.PipelineOutput, err error) bool {
+func (v *VoiceAssistant) fail(ctx context.Context, out device.Output, err error) bool {
 	if ctx.Err() != nil {
 		return false // cancelled by a new wake word or shutdown
 	}
 	slog.Error("Pipeline error", "err", err)
-	_ = out.SendEvent(ctx, transport.EventError, []byte("pipeline_error\x00Pipeline processing failed"))
+	_ = out.SendEvent(ctx, device.EventError, []byte("pipeline_error\x00Pipeline processing failed"))
 	return false
 }

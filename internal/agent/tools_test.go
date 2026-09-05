@@ -7,12 +7,11 @@ import (
 	"testing"
 
 	"github.com/bryfur/ovi-voice-assistant/internal/music"
-	"github.com/bryfur/ovi-voice-assistant/internal/scheduler"
 )
 
 func call(t *testing.T, name string, actx *Context, args Args) string {
 	t.Helper()
-	for _, tool := range BuiltinTools() {
+	for _, tool := range builtinTools() {
 		if tool.Name == name {
 			out, err := tool.Handler(context.Background(), actx, args)
 			if err != nil {
@@ -26,7 +25,7 @@ func call(t *testing.T, name string, actx *Context, args Args) string {
 }
 
 func TestBuiltinToolCount(t *testing.T) {
-	if n := len(BuiltinTools()); n != 19 {
+	if n := len(builtinTools()); n != 19 {
 		t.Fatalf("expected 19 tools, got %d", n)
 	}
 }
@@ -173,7 +172,7 @@ func TestMusicControlsWithoutQueue(t *testing.T) {
 }
 
 func TestAutomationTools(t *testing.T) {
-	actx := &Context{Scheduler: scheduler.New(filepath.Join(t.TempDir(), "a.json"), nil, nil)}
+	actx := &Context{Scheduler: NewScheduler(filepath.Join(t.TempDir(), "a.json"), nil, nil)}
 
 	created := call(t, "create_automation", actx, Args{"name": "morning", "schedule": "0 7 * * *", "prompt": "weather?"})
 	invalid := call(t, "create_automation", actx, Args{"name": "bad", "schedule": "nope", "prompt": "x"})

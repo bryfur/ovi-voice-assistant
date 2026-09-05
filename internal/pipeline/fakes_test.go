@@ -2,12 +2,12 @@ package pipeline
 
 import (
 	"context"
+	"github.com/bryfur/ovi-voice-assistant/internal/device"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/bryfur/ovi-voice-assistant/internal/agent"
-	"github.com/bryfur/ovi-voice-assistant/internal/transport"
 )
 
 // slowTTS emits each sentence's text as PCM after a small delay.
@@ -72,10 +72,10 @@ func (a *fakeAgent) RunStreamed(_ context.Context, text string, _ *agent.Context
 type recordingOutput struct {
 	mu     sync.Mutex
 	audio  []string
-	events []transport.EventType
+	events []device.EventType
 }
 
-func (r *recordingOutput) SendEvent(_ context.Context, e transport.EventType, _ []byte) error {
+func (r *recordingOutput) SendEvent(_ context.Context, e device.EventType, _ []byte) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.events = append(r.events, e)

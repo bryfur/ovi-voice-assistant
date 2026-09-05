@@ -3,31 +3,30 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"github.com/bryfur/ovi-voice-assistant/internal/device"
+	"github.com/bryfur/ovi-voice-assistant/internal/speech"
 	"log/slog"
 	"sync"
-
-	"github.com/bryfur/ovi-voice-assistant/internal/audio"
-	"github.com/bryfur/ovi-voice-assistant/internal/tts"
 )
 
-// ErrSpeechQueueStopped is returned for submissions after Stop.
-var ErrSpeechQueueStopped = errors.New("speech queue stopped")
+// errSpeechQueueStopped is returned for submissions after Stop.
+var errSpeechQueueStopped = errors.New("speech queue stopped")
 
 type speechItem struct {
 	tokens <-chan string
 	done   chan error
 }
 
-// SpeechQueue is a single-worker queue that serializes TTS synthesis and
+// speechQueue is a single-worker queue that serializes TTS synthesis and
 // device playback.
 //
 // Multiple callers (say tool, response TTS, announcements) submit text and
 // return immediately. One worker processes submissions in FIFO order,
 // streaming audio to the output so utterances never overlap on the wire.
-type SpeechQueue struct {
+type speechQueue struct {
 	ctx    context.Context
-	tts    tts.TTS
-	output audio.PipelineOutput
+	tts    speech.TTS
+	output device.Output
 
 	// mu is held for reading while a submission is in flight and for
 	// writing by Stop, so the queue channel is never closed under a sender.
@@ -37,14 +36,14 @@ type SpeechQueue struct {
 	closed bool
 }
 
-// NewSpeechQueue creates a queue bound to ctx; Stop must be called.
-func NewSpeechQueue(ctx context.Context, t tts.TTS, output audio.PipelineOutput) *SpeechQueue {
-	return &SpeechQueue{ctx: ctx, tts: t, output: output}
+// newSpeechQueue creates a queue bound to ctx; Stop must be called.
+func newSpeechQueue(ctx context.Context, t speech.TTS, output device.Output) *speechQueue {
+	return &speechQueue{ctx: ctx, tts: t, output: output}
 }
 
 // start launches the worker on first use. Caller must hold mu (read lock
 // suffices; the double-checked upgrade below handles creation).
-func (q *SpeechQueue) start() {
+func (q *speechQueue) start() {
 	q.mu.RUnlock()
 	q.mu.Lock()
 	if q.queue == nil && !q.closed {
@@ -58,7 +57,7 @@ func (q *SpeechQueue) start() {
 
 // Submit enqueues a fixed utterance. The returned channel receives the
 // playback result once the utterance has been sent.
-func (q *SpeechQueue) Submit(text string) <-chan error {
+func (q *speechQueue) Submit(text string) <-chan error {
 	tokens := make(chan string, 1)
 	tokens <- text
 	close(tokens)
@@ -66,7 +65,7 @@ func (q *SpeechQueue) Submit(text string) <-chan error {
 }
 
 // SubmitStream enqueues a token stream for synthesis.
-func (q *SpeechQueue) SubmitStream(tokens <-chan string) <-chan error {
+func (q *speechQueue) SubmitStream(tokens <-chan string) <-chan error {
 	done := make(chan error, 1)
 	q.mu.RLock()
 	defer q.mu.RUnlock()
@@ -74,7 +73,7 @@ func (q *SpeechQueue) SubmitStream(tokens <-chan string) <-chan error {
 		q.start()
 	}
 	if q.closed {
-		done <- ErrSpeechQueueStopped
+		done <- errSpeechQueueStopped
 		return done
 	}
 	select {
@@ -86,7 +85,7 @@ func (q *SpeechQueue) SubmitStream(tokens <-chan string) <-chan error {
 }
 
 // Stop closes the queue and waits for queued utterances to finish playing.
-func (q *SpeechQueue) Stop() {
+func (q *speechQueue) Stop() {
 	q.mu.Lock()
 	if q.closed {
 		q.mu.Unlock()
@@ -104,14 +103,14 @@ func (q *SpeechQueue) Stop() {
 	}
 }
 
-func (q *SpeechQueue) run(queue chan speechItem, done chan struct{}) {
+func (q *speechQueue) run(queue chan speechItem, done chan struct{}) {
 	defer close(done)
 	for item := range queue {
-		err := tts.Stream(q.ctx, q.tts, item.tokens, func(pcm []byte) error {
+		err := speech.Stream(q.ctx, q.tts, item.tokens, func(pcm []byte) error {
 			return q.output.SendAudio(q.ctx, pcm)
 		})
 		if err != nil && q.ctx.Err() == nil {
-			slog.Error("SpeechQueue worker error", "err", err)
+			slog.Error("speechQueue worker error", "err", err)
 		}
 		item.done <- err
 	}

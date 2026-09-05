@@ -13,14 +13,14 @@ import (
 	"strings"
 )
 
-// YtDlpPath is the yt-dlp binary used for YouTube Music search and stream
+// ytDlpPath is the yt-dlp binary used for YouTube Music search and stream
 // URL extraction.
-var YtDlpPath = "yt-dlp"
+var ytDlpPath = "yt-dlp"
 
-// ExtractAudioURL uses yt-dlp to get a direct audio stream URL for a
+// extractAudioURL uses yt-dlp to get a direct audio stream URL for a
 // YouTube video.
-func ExtractAudioURL(ctx context.Context, videoID string) (string, error) {
-	cmd := exec.CommandContext(ctx, YtDlpPath,
+func extractAudioURL(ctx context.Context, videoID string) (string, error) {
+	cmd := exec.CommandContext(ctx, ytDlpPath,
 		"-f", "bestaudio/best", "-g", "--no-warnings", "--no-playlist",
 		"https://music.youtube.com/watch?v="+videoID)
 	var stderr bytes.Buffer
@@ -50,8 +50,8 @@ type ytdlpEntry struct {
 	Creators json.RawMessage `json:"creators"`
 }
 
-// ParseYtDlpTracks parses newline-delimited yt-dlp JSON into tracks.
-func ParseYtDlpTracks(data []byte) []MusicTrack {
+// parseYtDlpTracks parses newline-delimited yt-dlp JSON into tracks.
+func parseYtDlpTracks(data []byte) []MusicTrack {
 	var tracks []MusicTrack
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 0, 64<<10), 16<<20)
@@ -93,14 +93,14 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// SearchYouTube searches YouTube Music and returns tracks with video IDs
+// searchYouTube searches YouTube Music and returns tracks with video IDs
 // for streaming.
-func SearchYouTube(ctx context.Context, query string, limit int) ([]MusicTrack, error) {
+func searchYouTube(ctx context.Context, query string, limit int) ([]MusicTrack, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 	run := func(target string) ([]MusicTrack, error) {
-		cmd := exec.CommandContext(ctx, YtDlpPath,
+		cmd := exec.CommandContext(ctx, ytDlpPath,
 			"-j", "--flat-playlist", "--no-warnings", "--ignore-errors",
 			"--playlist-end", strconv.Itoa(limit), target)
 		var stderr bytes.Buffer
@@ -109,7 +109,7 @@ func SearchYouTube(ctx context.Context, query string, limit int) ([]MusicTrack, 
 		if err != nil && len(out) == 0 {
 			return nil, fmt.Errorf("yt-dlp search: %w: %s", err, strings.TrimSpace(stderr.String()))
 		}
-		return ParseYtDlpTracks(out), nil
+		return parseYtDlpTracks(out), nil
 	}
 	tracks, err := run("https://music.youtube.com/search?q=" + url.QueryEscape(query) + "#songs")
 	if err != nil || len(tracks) == 0 {

@@ -2,8 +2,7 @@ package music
 
 import (
 	"context"
-
-	"github.com/bryfur/ovi-voice-assistant/internal/audio"
+	"github.com/bryfur/ovi-voice-assistant/internal/device"
 )
 
 // Grab an access token from Spotify's internal endpoint, then hit the Web API.
@@ -84,14 +83,14 @@ async () => {
 }
 `
 
-// SpotifyMusic streams Spotify via open.spotify.com.
-type SpotifyMusic struct {
-	*BrowserSession
+// spotifyMusic streams Spotify via open.spotify.com.
+type spotifyMusic struct {
+	*browserSession
 }
 
-// NewSpotifyMusic creates an unstarted Spotify provider.
-func NewSpotifyMusic(sampleRate int) *SpotifyMusic {
-	return &SpotifyMusic{NewBrowserSession("https://open.spotify.com", "spotify-profile", sampleRate)}
+// newSpotifyMusic creates an unstarted Spotify provider.
+func newSpotifyMusic(sampleRate int) *spotifyMusic {
+	return &spotifyMusic{newBrowserSession("https://open.spotify.com", "spotify-profile", sampleRate)}
 }
 
 type browserSearchResult struct {
@@ -103,7 +102,7 @@ type browserSearchResult struct {
 }
 
 // Search implements BrowserMusic.
-func (s *SpotifyMusic) Search(ctx context.Context, query string, limit int) ([]MusicTrack, error) {
+func (s *spotifyMusic) Search(ctx context.Context, query string, limit int) ([]MusicTrack, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -122,8 +121,8 @@ func (s *SpotifyMusic) Search(ctx context.Context, query string, limit int) ([]M
 }
 
 // StreamTrack implements BrowserMusic.
-func (s *SpotifyMusic) StreamTrack(ctx context.Context, track MusicTrack, output audio.PipelineOutput) error {
-	return s.BrowserSession.StreamTrack(ctx, output, func(ctx context.Context) error {
+func (s *spotifyMusic) StreamTrack(ctx context.Context, track MusicTrack, output device.Output) error {
+	return s.browserSession.StreamTrack(ctx, output, func(ctx context.Context) error {
 		return s.Evaluate(ctx, spotifyPlayJS, nil, map[string]any{
 			"uri": "spotify:track:" + track.SongID, "durationSec": track.DurationSeconds,
 		})
@@ -131,7 +130,7 @@ func (s *SpotifyMusic) StreamTrack(ctx context.Context, track MusicTrack, output
 }
 
 // StopPlayback implements BrowserMusic.
-func (s *SpotifyMusic) StopPlayback(ctx context.Context) error {
+func (s *spotifyMusic) StopPlayback(ctx context.Context) error {
 	if s.pageCtx == nil {
 		return nil
 	}

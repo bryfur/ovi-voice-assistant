@@ -7,14 +7,14 @@ import (
 
 func TestRegisterBrowserAndSearchDispatch(t *testing.T) {
 	fb := &fakeBrowser{}
-	RegisterBrowser("fake", fb)
+	registerBrowser("fake", fb)
 	defer func() {
 		browsersMu.Lock()
 		delete(browsers, "fake")
 		browsersMu.Unlock()
 	}()
 
-	tracks, err := SearchMusic(context.Background(), "q", "fake")
+	tracks, err := searchMusic(context.Background(), "q", "fake")
 
 	if err != nil || len(tracks) != 1 || tracks[0].Service != "fake" {
 		t.Fatalf("got %+v, %v", tracks, err)
@@ -25,7 +25,7 @@ func TestRegisterBrowserAndSearchDispatch(t *testing.T) {
 }
 
 func TestSearchMusicUnknownService(t *testing.T) {
-	_, err := SearchMusic(context.Background(), "q", "tidal")
+	_, err := searchMusic(context.Background(), "q", "tidal")
 
 	if err == nil {
 		t.Fatal("expected error")

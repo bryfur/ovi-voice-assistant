@@ -10,7 +10,7 @@ not json
 {"id":"ghi","title":"Third","artist":"Solo","channel":"Chan"}
 `)
 
-	tracks := ParseYtDlpTracks(data)
+	tracks := parseYtDlpTracks(data)
 
 	if len(tracks) != 3 {
 		t.Fatalf("got %d tracks: %+v", len(tracks), tracks)
@@ -24,7 +24,7 @@ not json
 }
 
 func TestParseYtDlpTracksEmpty(t *testing.T) {
-	if len(ParseYtDlpTracks(nil)) != 0 {
+	if len(parseYtDlpTracks(nil)) != 0 {
 		t.Fatal("expected no tracks")
 	}
 }
