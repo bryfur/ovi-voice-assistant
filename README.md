@@ -146,7 +146,7 @@ writes a key to `esphome/secrets.yaml`. Uncomment the `api.encryption` block in 
 
 Everything streams: mic audio is decoded while you talk, the transcript is ready as soon as the VAD closes your turn, LLM tokens are spoken chunk by chunk, and encoded audio is paced to the device 300 ms ahead of playback. After you stop talking the fixed costs are the `stt.silence` window, the LLM's first tokens, and synthesis of the first chunk. The first chunk ends at the first clause boundary so speech starts before the model finishes its first sentence.
 
-Measured on a 4-core x86 laptop (CPU only), synthesis of a 12-word sentence: Kokoro fp32 0.5 s, Piper medium 0.1 s. The Kokoro int8 pack is three times slower than fp32 on x86 and is not used. Pick Piper when latency matters more than voice quality.
+Measured with the process pinned to four 3.7 GHz cores of a Core Ultra 9 388H (a sandboxed dev shell; the full chip will be faster), synthesis of a 12-word sentence: Kokoro fp32 0.5 s, Piper medium 0.1 s. The Kokoro int8 pack was three times slower than fp32 on that CPU and is not used. Pick Piper when latency matters more than voice quality. Re-measure on your own hardware with `OVI_TEST_MODELS=1 go test ./internal/tts/ -run Latency -v` (and `OVI_TEST_PIPER=1` for Piper).
 
 ## Device features
 
