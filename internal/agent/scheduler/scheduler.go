@@ -1,5 +1,6 @@
-// Package scheduler runs persistent cron automations that send agent
-// prompts proactively and announce the result.
+// Package scheduler runs cron automations: at the scheduled minute a
+// prompt goes through the agent and the answer is announced on every
+// device. Automations persist as JSON.
 package scheduler
 
 import (
@@ -11,267 +12,194 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 )
 
-// checkInterval is how often the scheduler checks for automations to fire.
-const checkInterval = 30 * time.Second
+// tick is how often due automations are looked for.
+const tick = 30 * time.Second
 
-// Automation is a single scheduled automation.
+// Automation is one scheduled prompt.
 type Automation struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
-	Schedule string `json:"schedule"` // cron expression: minute hour dom month dow
-	Prompt   string `json:"prompt"`   // what to ask the agent
+	Schedule string `json:"schedule"` // five-field cron: minute hour day month weekday
+	Prompt   string `json:"prompt"`
 	Enabled  bool   `json:"enabled"`
-	LastRun  string `json:"last_run"` // RFC3339 — prevents double-firing within same minute
+	LastRun  string `json:"last_run"` // the minute it last fired, RFC 3339
 }
 
-// RunPrompt runs a prompt through the agent and returns the response.
-type RunPrompt func(ctx context.Context, prompt string) (string, error)
+// Ask runs a prompt through the agent.
+type Ask func(ctx context.Context, prompt string) (string, error)
 
-// Announce speaks text on all devices.
-type Announce func(ctx context.Context, text string) error
-
-// Scheduler runs persistent cron automations in the background.
+// Scheduler fires automations on time and keeps them on disk.
 type Scheduler struct {
-	path      string
-	runPrompt RunPrompt
-	announce  Announce
-
-	mu          sync.Mutex
-	automations []Automation
-	cancel      context.CancelFunc
-	loopDone    chan struct{}
-	fires       sync.WaitGroup
-
-	// Now is the clock; tests may override it.
+	path     string
+	ask      Ask
+	announce func(text string)
+	// Now is the clock; tests override it.
 	Now func() time.Time
+
+	mu   sync.Mutex
+	list []Automation
+	stop context.CancelFunc
+	done chan struct{}
 }
 
-// New creates a scheduler persisting to path.
-func New(path string, runPrompt RunPrompt, announce Announce) *Scheduler {
-	return &Scheduler{path: path, runPrompt: runPrompt, announce: announce, Now: time.Now}
+// New loads the automations stored at path (none if it is missing or
+// unreadable).
+func New(path string, ask Ask, announce func(string)) *Scheduler {
+	s := &Scheduler{path: path, ask: ask, announce: announce, Now: time.Now}
+	data, err := os.ReadFile(path)
+	if err == nil {
+		err = json.Unmarshal(data, &s.list)
+	}
+	if err != nil && !os.IsNotExist(err) {
+		slog.Error("Cannot load automations", "path", path, "err", err)
+		s.list = nil
+	}
+	slog.Info("Automations loaded", "count", len(s.list), "path", path)
+	return s
 }
 
-// -- Persistence --
-
-// Load reads automations from disk. A missing or corrupt file yields an
-// empty list.
-func (s *Scheduler) Load() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := os.ReadFile(s.path)
-	if err != nil {
-		s.automations = nil
-		return
-	}
-	var autos []Automation
-	if err := json.Unmarshal(data, &autos); err != nil {
-		slog.Error("Failed to load automations", "path", s.path, "err", err)
-		s.automations = nil
-		return
-	}
-	s.automations = autos
-	slog.Info("Loaded automations", "count", len(autos), "path", s.path)
-}
-
-// save persists automations. Caller must hold mu.
-func (s *Scheduler) save() {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		slog.Error("Failed to create automations dir", "err", err)
-		return
-	}
-	autos := s.automations
-	if autos == nil {
-		autos = []Automation{}
-	}
-	data, err := json.MarshalIndent(autos, "", "  ")
-	if err != nil {
-		return
-	}
-	if err := os.WriteFile(s.path, data, 0o644); err != nil {
-		slog.Error("Failed to save automations", "err", err)
-	}
-}
-
-// -- Public API (called by agent tools) --
-
-// Automations returns a copy of the current list.
+// Automations lists everything scheduled.
 func (s *Scheduler) Automations() []Automation {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]Automation(nil), s.automations...)
+	return slices.Clone(s.list)
 }
 
-// Create validates, persists and returns a new automation.
+// Create adds an enabled automation.
 func (s *Scheduler) Create(name, schedule, prompt string) (Automation, error) {
-	if !validateCron(schedule) {
-		return Automation{}, fmt.Errorf(
-			"invalid cron expression %q: expected 5 fields (minute hour day-of-month month day-of-week)",
-			schedule)
+	if len(strings.Fields(schedule)) != 5 {
+		return Automation{}, fmt.Errorf("invalid cron expression %q: expected 5 fields (minute hour day-of-month month day-of-week)", schedule)
 	}
-	auto := Automation{
-		ID:       newID(),
-		Name:     name,
-		Schedule: schedule,
-		Prompt:   prompt,
-		Enabled:  true,
-	}
+	id := make([]byte, 4)
+	_, _ = rand.Read(id)
+	a := Automation{ID: hex.EncodeToString(id), Name: name, Schedule: schedule, Prompt: prompt, Enabled: true}
 	s.mu.Lock()
-	s.automations = append(s.automations, auto)
+	defer s.mu.Unlock()
+	s.list = append(s.list, a)
 	s.save()
-	s.mu.Unlock()
-	slog.Info("Automation created", "name", name, "schedule", schedule, "prompt", truncate(prompt, 60))
-	return auto, nil
+	slog.Info("Automation created", "name", name, "schedule", schedule)
+	return a, nil
 }
 
-// Delete removes an automation by name. Returns true if found.
+// Delete removes an automation by name.
 func (s *Scheduler) Delete(name string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	kept := s.automations[:0:0]
-	for _, a := range s.automations {
-		if a.Name != name {
-			kept = append(kept, a)
-		}
-	}
-	if len(kept) == len(s.automations) {
+	n := len(s.list)
+	s.list = slices.DeleteFunc(s.list, func(a Automation) bool { return a.Name == name })
+	if len(s.list) == n {
 		return false
 	}
-	s.automations = kept
 	s.save()
 	slog.Info("Automation deleted", "name", name)
 	return true
 }
 
-// SetEnabled enables or disables an automation by name. Returns true if found.
-func (s *Scheduler) SetEnabled(name string, enabled bool) bool {
+// Enable turns an automation on or off by name.
+func (s *Scheduler) Enable(name string, on bool) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for i := range s.automations {
-		if s.automations[i].Name == name {
-			s.automations[i].Enabled = enabled
-			s.save()
-			slog.Info("Automation toggled", "name", name, "enabled", enabled)
-			return true
-		}
+	i := slices.IndexFunc(s.list, func(a Automation) bool { return a.Name == name })
+	if i < 0 {
+		return false
 	}
-	return false
+	s.list[i].Enabled = on
+	s.save()
+	slog.Info("Automation toggled", "name", name, "enabled", on)
+	return true
 }
 
-// -- Background loop --
+// save writes the list; the caller holds mu.
+func (s *Scheduler) save() {
+	data, _ := json.MarshalIndent(append([]Automation{}, s.list...), "", "  ")
+	err := os.MkdirAll(filepath.Dir(s.path), 0o755)
+	if err == nil {
+		err = os.WriteFile(s.path, data, 0o644)
+	}
+	if err != nil {
+		slog.Error("Cannot save automations", "path", s.path, "err", err)
+	}
+}
 
-// Start launches the periodic check loop.
+// Start checks for due automations every tick until Stop.
 func (s *Scheduler) Start() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.cancel != nil {
+	if s.stop != nil {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s.cancel = cancel
-	s.loopDone = make(chan struct{})
-	go s.loop(ctx, s.loopDone)
-	slog.Info("Scheduler started", "automations", len(s.automations))
-}
-
-// Stop halts the loop and waits for in-flight automations to finish.
-func (s *Scheduler) Stop() {
-	s.mu.Lock()
-	cancel := s.cancel
-	done := s.loopDone
-	s.cancel = nil
-	s.loopDone = nil
-	s.mu.Unlock()
-	if cancel != nil {
-		cancel()
-		<-done
-	}
-	s.fires.Wait()
-	slog.Info("Scheduler stopped")
-}
-
-func (s *Scheduler) loop(ctx context.Context, done chan struct{}) {
-	defer close(done)
-	ticker := time.NewTicker(checkInterval)
-	defer ticker.Stop()
-	for {
-		s.Check(ctx)
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
-}
-
-// Check fires every enabled automation whose schedule matches the current
-// minute and has not already fired in that minute.
-func (s *Scheduler) Check(ctx context.Context) {
-	now := s.Now()
-	nowMinute := now.Truncate(time.Minute)
-
-	s.mu.Lock()
-	var toFire []Automation
-	for i := range s.automations {
-		a := &s.automations[i]
-		if !a.Enabled || !cronMatches(a.Schedule, now) {
-			continue
-		}
-		if a.LastRun != "" {
-			if last, err := time.Parse(time.RFC3339Nano, a.LastRun); err == nil &&
-				!last.Truncate(time.Minute).Before(nowMinute) {
-				continue
+	done := make(chan struct{})
+	s.stop, s.done = cancel, done
+	go func() {
+		defer close(done)
+		t := time.NewTicker(tick)
+		defer t.Stop()
+		for {
+			s.Check(ctx)
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
 			}
 		}
-		a.LastRun = now.Format(time.RFC3339Nano)
-		toFire = append(toFire, *a)
+	}()
+	slog.Info("Scheduler started", "automations", len(s.list))
+}
+
+// Stop ends the checks and waits for a running automation to finish.
+func (s *Scheduler) Stop() {
+	s.mu.Lock()
+	stop, done := s.stop, s.done
+	s.stop, s.done = nil, nil
+	s.mu.Unlock()
+	if stop != nil {
+		stop()
+		<-done
 	}
-	if len(toFire) > 0 {
+}
+
+// Check fires every enabled automation due this minute that has not
+// fired in it yet, one after another so announcements never overlap.
+func (s *Scheduler) Check(ctx context.Context) {
+	now := s.Now()
+	minute := now.Truncate(time.Minute).Format(time.RFC3339)
+	var due []Automation
+	s.mu.Lock()
+	for i := range s.list {
+		a := &s.list[i]
+		if a.Enabled && a.LastRun != minute && cronMatches(a.Schedule, now) {
+			a.LastRun = minute
+			due = append(due, *a)
+		}
+	}
+	if len(due) > 0 {
 		s.save()
 	}
 	s.mu.Unlock()
-
-	for _, a := range toFire {
-		s.fires.Add(1)
-		go func(a Automation) {
-			defer s.fires.Done()
-			s.Fire(ctx, a)
-		}(a)
+	for _, a := range due {
+		s.Fire(ctx, a)
 	}
 }
 
-// Fire runs the automation's prompt through the agent and announces the result.
+// Fire asks the agent and announces a non-empty answer.
 func (s *Scheduler) Fire(ctx context.Context, a Automation) {
-	slog.Info("Automation firing", "name", a.Name, "prompt", truncate(a.Prompt, 60))
-	response, err := s.runPrompt(ctx, a.Prompt)
+	slog.Info("Automation firing", "name", a.Name)
+	answer, err := s.ask(ctx, a.Prompt)
 	if err != nil {
 		slog.Error("Automation failed", "name", a.Name, "err", err)
 		return
 	}
-	if strings.TrimSpace(response) == "" {
-		slog.Warn("Automation produced empty response", "name", a.Name)
+	if answer = strings.TrimSpace(answer); answer == "" {
+		slog.Warn("Automation had nothing to say", "name", a.Name)
 		return
 	}
-	if err := s.announce(ctx, response); err != nil {
-		slog.Error("Automation announce failed", "name", a.Name, "err", err)
-		return
-	}
-	slog.Info("Automation announced", "name", a.Name, "response", truncate(response, 80))
-}
-
-func truncate(s string, n int) string {
-	if r := []rune(s); len(r) > n {
-		return string(r[:n]) + "…"
-	}
-	return s
-}
-
-func newID() string {
-	b := make([]byte, 4)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+	s.announce(answer)
+	slog.Info("Automation announced", "name", a.Name)
 }

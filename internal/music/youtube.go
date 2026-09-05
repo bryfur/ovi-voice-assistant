@@ -3,122 +3,116 @@ package music
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/url"
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/bryfur/ovi-voice-assistant/internal/device"
 )
 
-// ytDlpPath is the yt-dlp binary used for YouTube Music search and stream
-// URL extraction.
-var ytDlpPath = "yt-dlp"
+// youtube plays YouTube Music: yt-dlp finds tracks and resolves stream
+// URLs, ffmpeg decodes them to PCM.
+type youtube struct{ ytdlp, ffmpeg string }
 
-// extractAudioURL uses yt-dlp to get a direct audio stream URL for a
-// YouTube video.
-func extractAudioURL(ctx context.Context, videoID string) (string, error) {
-	cmd := exec.CommandContext(ctx, ytDlpPath,
-		"-f", "bestaudio/best", "-g", "--no-warnings", "--no-playlist",
-		"https://music.youtube.com/watch?v="+videoID)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("yt-dlp: %w: %s", err, strings.TrimSpace(stderr.String()))
-	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) == 0 || lines[0] == "" {
-		return "", fmt.Errorf("yt-dlp returned no URL for %s", videoID)
-	}
-	return lines[0], nil
-}
-
-// ytdlpEntry is the subset of yt-dlp's flat-playlist JSON we care about.
-type ytdlpEntry struct {
-	ID       string          `json:"id"`
-	Title    string          `json:"title"`
-	Duration float64         `json:"duration"`
-	Artist   string          `json:"artist"`
-	Artists  []string        `json:"artists"`
-	Uploader string          `json:"uploader"`
-	Channel  string          `json:"channel"`
-	Creator  string          `json:"creator"`
-	Album    string          `json:"album"`
-	Creators json.RawMessage `json:"creators"`
-}
-
-// parseYtDlpTracks parses newline-delimited yt-dlp JSON into tracks.
-func parseYtDlpTracks(data []byte) []MusicTrack {
-	var tracks []MusicTrack
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	scanner.Buffer(make([]byte, 0, 64<<10), 16<<20)
-	for scanner.Scan() {
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
-			continue
-		}
-		var e ytdlpEntry
-		if err := json.Unmarshal(line, &e); err != nil || e.ID == "" {
-			continue
-		}
-		artist := e.Artist
-		if artist == "" && len(e.Artists) > 0 {
-			artist = strings.Join(e.Artists, ", ")
-		}
-		if artist == "" {
-			artist = firstNonEmpty(e.Creator, e.Uploader, e.Channel)
-		}
-		artist = strings.TrimSuffix(artist, " - Topic")
-		tracks = append(tracks, MusicTrack{
-			Title:           e.Title,
-			Artist:          artist,
-			Album:           e.Album,
-			DurationSeconds: int(e.Duration),
-			VideoID:         e.ID,
-			Service:         "youtube",
-		})
-	}
-	return tracks
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-// searchYouTube searches YouTube Music and returns tracks with video IDs
-// for streaming.
-func searchYouTube(ctx context.Context, query string, limit int) ([]MusicTrack, error) {
-	if limit <= 0 {
-		limit = 20
-	}
-	run := func(target string) ([]MusicTrack, error) {
-		cmd := exec.CommandContext(ctx, ytDlpPath,
-			"-j", "--flat-playlist", "--no-warnings", "--ignore-errors",
-			"--playlist-end", strconv.Itoa(limit), target)
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		out, err := cmd.Output()
-		if err != nil && len(out) == 0 {
-			return nil, fmt.Errorf("yt-dlp search: %w: %s", err, strings.TrimSpace(stderr.String()))
-		}
-		return parseYtDlpTracks(out), nil
-	}
-	tracks, err := run("https://music.youtube.com/search?q=" + url.QueryEscape(query) + "#songs")
+// Search asks YouTube Music first and plain YouTube if that finds nothing.
+func (y youtube) Search(ctx context.Context, query string, limit int) ([]Track, error) {
+	tracks, err := y.list(ctx, limit, "https://music.youtube.com/search?q="+url.QueryEscape(query)+"#songs")
 	if err != nil || len(tracks) == 0 {
-		// Fall back to a plain YouTube search.
-		tracks, err = run(fmt.Sprintf("ytsearch%d:%s", limit, query))
-		if err != nil {
+		if tracks, err = y.list(ctx, limit, fmt.Sprintf("ytsearch%d:%s", limit, query)); err != nil {
 			return nil, err
 		}
 	}
 	slog.Info("YouTube Music search", "query", query, "results", len(tracks))
 	return tracks, nil
+}
+
+func (y youtube) list(ctx context.Context, limit int, target string) ([]Track, error) {
+	out, err := y.run(ctx, "-j", "--flat-playlist", "--no-warnings", "--ignore-errors",
+		"--playlist-end", strconv.Itoa(limit), target)
+	if err != nil && len(out) == 0 {
+		return nil, err
+	}
+	return parseTracks(out), nil
+}
+
+// Play resolves a direct audio URL and pipes it through ffmpeg as s16le PCM.
+func (y youtube) Play(ctx context.Context, track Track, out device.Output) error {
+	u, err := y.run(ctx, "-f", "bestaudio/best", "-g", "--no-warnings", "--no-playlist",
+		"https://music.youtube.com/watch?v="+track.ID)
+	if err != nil {
+		return err
+	}
+	src, _, _ := strings.Cut(strings.TrimSpace(string(u)), "\n")
+	if src == "" {
+		return fmt.Errorf("yt-dlp returned no URL for %s", track.ID)
+	}
+	cmd := exec.CommandContext(ctx, y.ffmpeg,
+		"-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
+		"-i", src, "-f", "s16le", "-ar", strconv.Itoa(Rate), "-ac", strconv.Itoa(Channels),
+		"-loglevel", "error", "pipe:1")
+	pcm, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start ffmpeg: %w", err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+
+	buf := make([]byte, Rate*Channels*2*20/1000) // 20 ms
+	for {
+		n, err := io.ReadFull(pcm, buf)
+		if n > 0 {
+			if err := out.SendAudio(ctx, buf[:n]); err != nil {
+				return err
+			}
+		}
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+	}
+}
+
+func (y youtube) run(ctx context.Context, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, y.ytdlp, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return out, fmt.Errorf("yt-dlp: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return out, nil
+}
+
+// parseTracks reads yt-dlp's newline-delimited JSON.
+func parseTracks(data []byte) []Track {
+	var tracks []Track
+	sc := bufio.NewScanner(bytes.NewReader(data))
+	sc.Buffer(nil, 16<<20)
+	for sc.Scan() {
+		var e struct {
+			ID, Title, Artist, Album, Creator, Uploader, Channel string
+			Artists                                              []string
+			Duration                                             float64
+		}
+		if err := json.Unmarshal(sc.Bytes(), &e); err != nil || e.ID == "" {
+			continue
+		}
+		artist := cmp.Or(e.Artist, strings.Join(e.Artists, ", "), e.Creator, e.Uploader, e.Channel)
+		tracks = append(tracks, Track{
+			Title: e.Title, Artist: strings.TrimSuffix(artist, " - Topic"), Album: e.Album,
+			Duration: int(e.Duration), ID: e.ID, Service: "youtube",
+		})
+	}
+	return tracks
 }

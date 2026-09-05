@@ -1,10 +1,9 @@
-// Package tts implements text-to-speech on sherpa-onnx (Kokoro, Piper)
-// with sentence-level streaming of LLM output into audio.
+// Package tts turns text into speech on sherpa-onnx (Kokoro, Piper) and
+// streams a model's reply into audio sentence by sentence.
 package tts
 
 import (
 	"fmt"
-	"github.com/bryfur/ovi-voice-assistant/internal/speech/models"
 	"log/slog"
 	"path/filepath"
 	"runtime"
@@ -16,12 +15,22 @@ import (
 	sherpa "github.com/k2-fsa/sherpa-onnx-go/sherpa_onnx"
 
 	"github.com/bryfur/ovi-voice-assistant/internal/config"
+	"github.com/bryfur/ovi-voice-assistant/internal/speech/models"
 )
 
+// Synthesizer renders text to 16-bit mono PCM.
+type Synthesizer interface {
+	Load() error
+	SampleRate() int
+	// Synthesize renders text, calling emit with PCM as each sentence is ready.
+	Synthesize(text string, emit func(pcm []byte) error) error
+	Close()
+}
+
 const (
-	// fp32 on purpose: the int8 pack is ~3x slower on x86 CPUs.
-	kokoroPack   = "kokoro-multi-lang-v1_0"
+	kokoroPack   = "kokoro-multi-lang-v1_0" // fp32: the int8 pack is ~3x slower on x86
 	defaultVoice = "af_heart"
+	defaultPiper = "en_US-lessac-medium"
 )
 
 // kokoroVoices maps Kokoro v1.0 voice names to speaker ids in voices.bin.
@@ -51,30 +60,29 @@ func KokoroVoices() []string {
 	return out
 }
 
-// sherpaTTS is Kokoro or Piper via sherpa-onnx's offline TTS.
-type sherpaTTS struct {
-	cfg   config.TTSConfig
-	rate  int // output rate
-	mu    sync.Mutex
-	tts   *sherpa.OfflineTts
-	sid   int
-	speed float32
-}
-
-// New creates the configured synthesizer, outputting PCM at rate (0 =
-// model native).
-func New(cfg config.TTSConfig, rate int) (TTS, error) {
+// New creates the configured synthesizer, outputting PCM at rate (0 = the
+// model's native rate).
+func New(cfg config.TTSConfig, rate int) (Synthesizer, error) {
 	switch cfg.Provider {
 	case "kokoro", "piper":
-	default:
-		return nil, fmt.Errorf("unknown TTS provider %q", cfg.Provider)
+		return &synth{cfg: cfg, rate: rate}, nil
 	}
-	return &sherpaTTS{cfg: cfg, rate: rate, speed: 1}, nil
+	return nil, fmt.Errorf("unknown TTS provider %q", cfg.Provider)
 }
 
-func (s *sherpaTTS) SampleRate() int { return s.rate }
+// synth is Kokoro or Piper through sherpa-onnx's offline TTS.
+type synth struct {
+	cfg  config.TTSConfig
+	rate int
+	sid  int // speaker id
 
-func (s *sherpaTTS) Load() error {
+	mu  sync.Mutex
+	tts *sherpa.OfflineTts
+}
+
+func (s *synth) SampleRate() int { return s.rate }
+
+func (s *synth) Load() error {
 	mc := sherpa.OfflineTtsModelConfig{NumThreads: min(runtime.NumCPU(), 8), Provider: "cpu"}
 	var err error
 	if s.cfg.Provider == "kokoro" {
@@ -84,9 +92,6 @@ func (s *sherpaTTS) Load() error {
 	}
 	if err != nil {
 		return err
-	}
-	if s.cfg.Speed > 0 {
-		s.speed = float32(s.cfg.Speed)
 	}
 	cfg := sherpa.OfflineTtsConfig{Model: mc, MaxNumSentences: 1}
 	if s.tts = sherpa.NewOfflineTts(&cfg); s.tts == nil {
@@ -100,17 +105,14 @@ func (s *sherpaTTS) Load() error {
 	return nil
 }
 
-func (s *sherpaTTS) kokoro() (sherpa.OfflineTtsKokoroModelConfig, error) {
-	var c sherpa.OfflineTtsKokoroModelConfig
+func (s *synth) kokoro() (c sherpa.OfflineTtsKokoroModelConfig, err error) {
 	voice := s.cfg.Model
 	if voice == "" {
 		voice = defaultVoice
 	}
 	if id, ok := kokoroVoices[voice]; ok {
 		s.sid = id
-	} else if id, err := strconv.Atoi(voice); err == nil {
-		s.sid = id
-	} else {
+	} else if s.sid, err = strconv.Atoi(voice); err != nil {
 		return c, fmt.Errorf("unknown Kokoro voice %q", voice)
 	}
 	dir, err := models.Ensure(models.TTS, kokoroPack)
@@ -125,22 +127,20 @@ func (s *sherpaTTS) kokoro() (sherpa.OfflineTtsKokoroModelConfig, error) {
 	if strings.HasPrefix(voice, "b") {
 		lexicon = "lexicon-gb-en.txt"
 	}
-	c = sherpa.OfflineTtsKokoroModelConfig{
+	return sherpa.OfflineTtsKokoroModelConfig{
 		Model:       model,
 		Voices:      filepath.Join(dir, "voices.bin"),
 		Tokens:      filepath.Join(dir, "tokens.txt"),
 		DataDir:     filepath.Join(dir, "espeak-ng-data"),
 		Lexicon:     filepath.Join(dir, lexicon),
 		LengthScale: 1,
-	}
-	return c, nil
+	}, nil
 }
 
-func (s *sherpaTTS) piper() (sherpa.OfflineTtsVitsModelConfig, error) {
-	var c sherpa.OfflineTtsVitsModelConfig
+func (s *synth) piper() (c sherpa.OfflineTtsVitsModelConfig, err error) {
 	name := s.cfg.Model
 	if name == "" {
-		name = "en_US-lessac-medium"
+		name = defaultPiper
 	}
 	dir, err := models.Ensure(models.TTS, "vits-piper-"+name)
 	if err != nil {
@@ -150,38 +150,38 @@ func (s *sherpaTTS) piper() (sherpa.OfflineTtsVitsModelConfig, error) {
 	if err != nil {
 		return c, err
 	}
-	c = sherpa.OfflineTtsVitsModelConfig{
+	return sherpa.OfflineTtsVitsModelConfig{
 		Model:       model,
 		Tokens:      filepath.Join(dir, "tokens.txt"),
 		DataDir:     filepath.Join(dir, "espeak-ng-data"),
 		NoiseScale:  0.667,
 		NoiseScaleW: 0.8,
 		LengthScale: 1,
-	}
-	return c, nil
+	}, nil
 }
 
-// Synthesize renders text sentence by sentence, emitting each as PCM.
-func (s *sherpaTTS) Synthesize(text string, emit func([]byte) error) error {
+func (s *synth) Synthesize(text string, emit func([]byte) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.tts == nil {
 		return fmt.Errorf("TTS not loaded")
 	}
+	speed := float32(1)
+	if s.cfg.Speed > 0 {
+		speed = float32(s.cfg.Speed)
+	}
 	native := s.tts.SampleRate()
-	var emitErr error
-	s.tts.GenerateWithCallback(text, s.sid, s.speed, func(samples []float32) bool {
-		if len(samples) == 0 {
-			return true
+	var err error
+	s.tts.GenerateWithCallback(text, s.sid, speed, func(samples []float32) bool {
+		if len(samples) > 0 {
+			err = emit(pcm(resample(samples, native, s.rate)))
 		}
-		pcm := float32ToBytes(resample(samples, native, s.rate))
-		emitErr = emit(pcm)
-		return emitErr == nil
+		return err == nil
 	})
-	return emitErr
+	return err
 }
 
-func (s *sherpaTTS) Close() {
+func (s *synth) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.tts != nil {

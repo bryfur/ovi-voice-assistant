@@ -9,16 +9,16 @@ import (
 	"github.com/bryfur/ovi-voice-assistant/internal/config"
 )
 
-func scripted(lines ...string) (*IO, *bytes.Buffer) {
+func scripted(lines ...string) (*Console, *bytes.Buffer) {
 	out := &bytes.Buffer{}
-	return &IO{In: strings.NewReader(strings.Join(lines, "\n") + "\n"), Out: out}, out
+	return &Console{In: strings.NewReader(strings.Join(lines, "\n") + "\n"), Out: out}, out
 }
 
 func stubScan(t *testing.T, devices []Device) {
 	t.Helper()
 	oldScan, oldFlash := scanDevices, runFlash
 	scanDevices = func() []Device { return devices }
-	runFlash = func(*IO) { t.Fatal("flash should not run") }
+	runFlash = func(*Console) { t.Fatal("flash should not run") }
 	t.Cleanup(func() { scanDevices, runFlash = oldScan, oldFlash })
 }
 

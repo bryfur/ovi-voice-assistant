@@ -2,22 +2,22 @@ package stt
 
 import (
 	"context"
-	"encoding/binary"
-	"github.com/bryfur/ovi-voice-assistant/internal/speech/models"
 	"log/slog"
 	"time"
 
 	sherpa "github.com/k2-fsa/sherpa-onnx-go/sherpa_onnx"
+
+	"github.com/bryfur/ovi-voice-assistant/internal/speech/models"
 )
 
 // Listening limits; variables so tests can shorten them.
 var (
-	noSpeechTimeout = 5 * time.Second  // give up if nobody talks
+	noSpeechTimeout = 5 * time.Second  // give up if nobody starts talking
 	maxListen       = 60 * time.Second // hard cap on one utterance
 )
 
 const (
-	minSpeech    = 0.3 // seconds of speech for a valid utterance
+	minSpeech    = 0.3 // seconds of speech that make an utterance
 	vadThreshold = 0.4
 )
 
@@ -31,22 +31,13 @@ type vad interface {
 	Reset()
 }
 
-// listen feeds mic audio through the VAD (and feed, if set) until a speech
-// segment completes or a timeout fires. It returns the segment samples, or
-// nil when nothing was said.
-// bytesToFloat32 converts little-endian 16-bit PCM to samples in [-1, 1).
-func bytesToFloat32(b []byte) []float32 {
-	out := make([]float32, len(b)/2)
-	for i := range out {
-		out[i] = float32(int16(binary.LittleEndian.Uint16(b[i*2:]))) / 32768
-	}
-	return out
-}
-
+// listen feeds mic audio through the VAD (and feed, when given) until an
+// utterance ends or a timeout fires. It returns the utterance, or nil
+// when nothing was said.
 func listen(ctx context.Context, mic <-chan []byte, v vad, onSpeech func(), feed func([]float32)) ([]float32, error) {
 	v.Reset()
 	start := time.Now()
-	speaking := false
+	spoke := false
 	for {
 		var chunk []byte
 		var ok bool
@@ -56,17 +47,15 @@ func listen(ctx context.Context, mic <-chan []byte, v vad, onSpeech func(), feed
 		case chunk, ok = <-mic:
 		}
 		if !ok {
-			v.Flush()
-			seg, _ := v.Segment()
-			return seg, nil
+			return flush(v), nil
 		}
-		samples := bytesToFloat32(chunk)
-		v.Accept(samples)
+		s := samples(chunk)
+		v.Accept(s)
 		if feed != nil {
-			feed(samples)
+			feed(s)
 		}
-		if !speaking && v.Speaking() {
-			speaking = true
+		if !spoke && v.Speaking() {
+			spoke = true
 			if onSpeech != nil {
 				onSpeech()
 			}
@@ -75,26 +64,30 @@ func listen(ctx context.Context, mic <-chan []byte, v vad, onSpeech func(), feed
 			slog.Info("End of speech", "secs", float64(len(seg))/SampleRate)
 			return seg, nil
 		}
-		elapsed := time.Since(start)
-		if !v.Speaking() && elapsed > noSpeechTimeout {
+		switch elapsed := time.Since(start); {
+		case elapsed > maxListen:
+			slog.Warn("Max listen duration reached")
+			return flush(v), nil
+		case !spoke && elapsed > noSpeechTimeout:
 			slog.Info("No speech detected, giving up")
 			return nil, nil
-		}
-		if elapsed > maxListen {
-			slog.Warn("Max listen duration reached")
-			v.Flush()
-			seg, _ := v.Segment()
-			return seg, nil
 		}
 	}
 }
 
-// sileroVAD adapts sherpa's VAD to the vad interface.
-type sileroVAD struct{ v *sherpa.VoiceActivityDetector }
+// flush closes the open utterance, if any.
+func flush(v vad) []float32 {
+	v.Flush()
+	seg, _ := v.Segment()
+	return seg
+}
 
-func newSileroVAD(minSilence float64) (*sileroVAD, error) {
-	if minSilence <= 0 {
-		minSilence = 0.75
+// silero adapts sherpa's Silero VAD to the vad interface.
+type silero struct{ v *sherpa.VoiceActivityDetector }
+
+func newSilero(silence float64) (*silero, error) {
+	if silence <= 0 {
+		silence = 0.75
 	}
 	path, err := models.EnsureFile(models.ASR, "silero_vad.onnx")
 	if err != nil {
@@ -104,7 +97,7 @@ func newSileroVAD(minSilence float64) (*sileroVAD, error) {
 	cfg.SileroVad = sherpa.SileroVadModelConfig{
 		Model:              path,
 		Threshold:          vadThreshold,
-		MinSilenceDuration: float32(minSilence),
+		MinSilenceDuration: float32(silence),
 		MinSpeechDuration:  minSpeech,
 		MaxSpeechDuration:  float32(maxListen.Seconds()),
 		WindowSize:         512,
@@ -113,16 +106,16 @@ func newSileroVAD(minSilence float64) (*sileroVAD, error) {
 	if v == nil {
 		return nil, errLoad("Silero VAD")
 	}
-	return &sileroVAD{v}, nil
+	return &silero{v}, nil
 }
 
-func (s *sileroVAD) Accept(samples []float32) { s.v.AcceptWaveform(samples) }
-func (s *sileroVAD) Speaking() bool           { return s.v.IsSpeech() }
-func (s *sileroVAD) Flush()                   { s.v.Flush() }
-func (s *sileroVAD) Reset()                   { s.v.Reset() }
-func (s *sileroVAD) Close()                   { sherpa.DeleteVoiceActivityDetector(s.v) }
+func (s *silero) Accept(samples []float32) { s.v.AcceptWaveform(samples) }
+func (s *silero) Speaking() bool           { return s.v.IsSpeech() }
+func (s *silero) Flush()                   { s.v.Flush() }
+func (s *silero) Reset()                   { s.v.Reset() }
+func (s *silero) Close()                   { sherpa.DeleteVoiceActivityDetector(s.v) }
 
-func (s *sileroVAD) Segment() ([]float32, bool) {
+func (s *silero) Segment() ([]float32, bool) {
 	if s.v.IsEmpty() {
 		return nil, false
 	}
@@ -130,9 +123,3 @@ func (s *sileroVAD) Segment() ([]float32, bool) {
 	s.v.Pop()
 	return seg.Samples, true
 }
-
-type loadError string
-
-func errLoad(what string) error { return loadError(what) }
-
-func (e loadError) Error() string { return "sherpa-onnx failed to load " + string(e) }

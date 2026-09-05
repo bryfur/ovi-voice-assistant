@@ -9,6 +9,7 @@ func TestCalculate(t *testing.T) {
 		"7 / 2":            "3.5",
 		"7 // 2":           "3",
 		"10 % 3":           "1",
+		"-7 % 3":           "2",
 		"-3 + 5":           "2",
 		"2 * (3 + 4)":      "14",
 		"abs(-2.5)":        "2.5",
@@ -20,7 +21,12 @@ func TestCalculate(t *testing.T) {
 		"floor(1.8)":       "1",
 		"1e3":              "1000",
 		"2 ** 3 ** 2":      "512",
+		"-2 ** 2":          "-4",
+		"2 ** -1":          "0.5",
 		"1_000 + 1":        "1001",
+		"sin(pi/2)+cos(0)": "2",
+		"10 - 2 - 3":       "5",
+		"1/3":              "0.3333333333333333",
 	}
 
 	for expr, want := range cases {
@@ -32,26 +38,12 @@ func TestCalculate(t *testing.T) {
 	}
 }
 
-func TestCalculateTrig(t *testing.T) {
-	got, err := calculate("sin(pi/2) + cos(0)")
-
-	if err != nil || got != "2" {
-		t.Fatalf("got %q, %v", got, err)
-	}
-}
-
 func TestCalculateErrors(t *testing.T) {
-	for _, expr := range []string{"", "1 +", "foo(1)", "x.y", "1 / 0", "(1", "import os", "2 3"} {
+	for _, expr := range []string{"", "1 +", "foo(1)", "x.y", "1 / 0", "5 % 0", "(1", "import os", "2 3", "round(1,2,3)", "2 * ** 3", "1e", "sqrt(1, 2)"} {
 		_, err := calculate(expr)
 
 		if err == nil {
 			t.Errorf("calculate(%q) should fail", expr)
 		}
-	}
-}
-
-func TestFormatNumber(t *testing.T) {
-	if formatNumber(1.0/3) != "0.3333333333333333" || formatNumber(5) != "5" {
-		t.Fatal("formatting wrong")
 	}
 }

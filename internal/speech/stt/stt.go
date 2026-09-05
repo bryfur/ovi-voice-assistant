@@ -1,9 +1,11 @@
-// Package stt implements speech-to-text on sherpa-onnx: a Silero VAD
-// listen loop feeding Nemotron (streaming) or Whisper (offline).
+// Package stt turns microphone audio into text on sherpa-onnx: a Silero
+// VAD finds the utterance while Nemotron (streaming) or Whisper (offline)
+// recognizes it.
 package stt
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"runtime"
 
@@ -13,8 +15,8 @@ import (
 // SampleRate is the fixed device microphone rate.
 const SampleRate = 16000
 
-// STT listens to a mic stream and returns what was said.
-type STT interface {
+// Recognizer listens to a mic stream and returns what was said.
+type Recognizer interface {
 	Load() error
 	// Listen consumes 16 kHz mono PCM until the user stops speaking and
 	// returns the transcript ("" if nothing was said). onSpeech fires when
@@ -24,14 +26,25 @@ type STT interface {
 }
 
 // New builds the configured recognizer.
-func New(cfg config.STTConfig) (STT, error) {
+func New(cfg config.STTConfig) (Recognizer, error) {
 	switch cfg.Provider {
 	case "nemotron":
-		return newNemotron(cfg), nil
+		return &nemotron{cfg: cfg}, nil
 	case "whisper":
-		return newWhisper(cfg), nil
+		return &whisper{cfg: cfg}, nil
 	}
 	return nil, fmt.Errorf("unknown STT provider %q", cfg.Provider)
 }
 
 func threads() int { return min(runtime.NumCPU(), 8) }
+
+func errLoad(what string) error { return fmt.Errorf("sherpa-onnx failed to load %s", what) }
+
+// samples converts little-endian 16-bit PCM to floats in [-1, 1).
+func samples(pcm []byte) []float32 {
+	out := make([]float32, len(pcm)/2)
+	for i := range out {
+		out[i] = float32(int16(binary.LittleEndian.Uint16(pcm[2*i:]))) / 32768
+	}
+	return out
+}

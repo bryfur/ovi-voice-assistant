@@ -8,11 +8,11 @@ Guiding principles: keep it simple, keep it short, keep it fast. Prefer deleting
 
 ESPHome device → server → device, all streaming. Seven top-level domains; the big ones have subpackages. Dependencies flow downward only.
 
-1. **device** — the wire: events, WiFi TCP and BLE GATT transports, the `Output`/`Speaker` interfaces and `EncodingOutput`, which paces encoded audio to real time and orders events with playback. `device/codec` holds PCM/LC3/Opus (cgo). Depends on nothing internal.
+1. **device** — the wire: `Event` payloads, a `Transport` (WiFi TCP or BLE GATT) that delivers to a `Handler`, and `Speaker`, the `Output` that encodes PCM, paces it to real time and orders events behind playback. `device/codec` holds PCM/LC3/Opus (cgo) behind one `Format` value. Depends on nothing internal.
 2. **speech** — everything sherpa-onnx. `speech/models` downloads packs to `~/.cache/ovi/models`; `speech/stt` is the VAD-driven `listen` loop feeding Nemotron (online transducer, ~0 ms tail) or Whisper (offline); `speech/tts` is Kokoro (fp32 pack; int8 is 3× slower on x86) or Piper plus sentence streaming (the first chunk ends at a clause boundary so audio starts early). `stt.silence` is the main latency knob.
-3. **agent** — OpenAI SDK streaming loop with 19 built-in tools and sub-agents as tools; `agent/mcp` is the stdio MCP client; `agent/scheduler` the cron automations. History is per wake session, in memory.
-4. **music** — player, multi-room `MusicGroup`, YouTube via `yt-dlp` + `ffmpeg`; `music/browser` plays Spotify / Apple Music through a captured Chromium tab, enabled with `music.services`.
-5. **pipeline** — `VoiceAssistant` runs STT → Agent → TTS per utterance, `speechQueue` serializes speech, `DeviceConnection` is the per-device state machine, `DeviceManager` arbitrates wake words across devices (0.5 s window).
+3. **agent** — OpenAI SDK streaming loop with 19 built-in tools and sub-agents as tools; tools act on an `Env` (announce, music, scheduler, timers); `agent/mcp` is the stdio MCP client; `agent/scheduler` the cron automations. History is per wake session, in memory.
+4. **music** — one `Player` streams a queue of `Track`s to every device at once (SYNC_PLAY); each source is a `Service`: YouTube via `yt-dlp` + `ffmpeg` built in, `music/browser` adds Spotify / Apple Music through a captured Chromium tab, enabled with `music.services`. The pipeline calls `Interrupt` on a wake word and `Continue` when the session ends, so music ducks under speech and comes back.
+5. **pipeline** — `VoiceAssistant` runs STT → Agent → TTS per utterance, `Connection` is the per-device state machine, `Manager` arbitrates wake words across devices (0.5 s window).
 6. **cli** — terminal prompts, mDNS discovery, config-file editing, the ESPHome flash flow and the setup wizard.
 7. **config** — the settings struct and its layered loading.
 
@@ -37,7 +37,7 @@ Run both lint and tests after every change.
 ## Code conventions
 
 - One type per file, file named after the type in snake_case.
-- Small interfaces at the point of use (`pipeline.Runner`, `stt.vad`) so tests use fakes; no mocking libraries. Keep packages few and cohesive, subpackages only where a domain has a clearly separable part; unexport anything that does not cross a package line.
+- Small interfaces at the point of use (`pipeline.Voice`, `stt.vad`) so tests use fakes; no mocking libraries. Keep packages few and cohesive, subpackages only where a domain has a clearly separable part; unexport anything that does not cross a package line.
 - Goroutines are cancelled via `context.Context` or a stop channel, never abandoned.
 - Tests: standard `testing`, colocated `foo_test.go`, Arrange / Act / Assert separated by blank lines, fakes over real models or network. Model-backed tests are gated by `OVI_TEST_MODELS=1`.
 - Error strings are lowercase; `slog` for logging; keep comments to what the code cannot say.

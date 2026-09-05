@@ -31,23 +31,15 @@ func TestResampleLengthAndTone(t *testing.T) {
 	if gain := num / den; gain < 0.9 || gain > 1.1 {
 		t.Fatalf("tone not preserved, gain = %.3f", gain)
 	}
-}
-
-func TestResampleIdentityAndEmpty(t *testing.T) {
-	in := sine(10, 440, 16000)
-
-	if out := resample(in, 16000, 16000); &out[0] != &in[0] {
-		t.Fatal("same rate must return input")
-	}
-	if out := resample(nil, 24000, 16000); len(out) != 0 {
-		t.Fatal("expected empty")
+	if same := resample(in, 24000, 24000); &same[0] != &in[0] || len(resample(nil, 24000, 16000)) != 0 {
+		t.Fatal("same rate must return input; empty stays empty")
 	}
 }
 
-func TestPCMConversions(t *testing.T) {
-	pcm := float32ToBytes([]float32{-1, 0, 1, 2})
+func TestPCMClips(t *testing.T) {
+	b := pcm([]float32{-1, 0, 1, 2})
 
-	if len(pcm) != 8 || pcm[0] != 0x01 || pcm[1] != 0x80 || pcm[4] != 0xff || pcm[5] != 0x7f {
-		t.Fatalf("pcm = %v", pcm)
+	if len(b) != 8 || b[0] != 0x01 || b[1] != 0x80 || b[4] != 0xff || b[5] != 0x7f || b[6] != 0xff || b[7] != 0x7f {
+		t.Fatalf("pcm = %v", b)
 	}
 }

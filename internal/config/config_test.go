@@ -79,11 +79,11 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
-func TestGetDevices(t *testing.T) {
+func TestDevicesFieldParses(t *testing.T) {
 	s := Default()
 	s.Devices = "a,b:1"
 
-	devs, err := s.GetDevices()
+	devs, err := ParseDevices(string(s.Devices))
 
 	if err != nil || len(devs) != 2 || devs[1].Port != 1 {
 		t.Fatalf("got %v, %v", devs, err)

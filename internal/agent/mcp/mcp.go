@@ -1,10 +1,11 @@
-// Package mcp is a minimal Model Context Protocol client over stdio:
-// newline-delimited JSON-RPC 2.0 to a subprocess with initialize,
-// tools/list and tools/call.
+// Package mcp is a minimal Model Context Protocol client: newline-delimited
+// JSON-RPC 2.0 over the stdio of a subprocess, with initialize, tools/list
+// and tools/call.
 package mcp
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,73 +24,31 @@ import (
 // ProtocolVersion is the MCP revision we advertise.
 const ProtocolVersion = "2025-06-18"
 
-// ServerConfig describes how to launch an MCP server.
-type ServerConfig struct {
+// Server is how to launch an MCP server.
+type Server struct {
 	Name    string            `json:"name,omitempty"`
 	Command string            `json:"command"`
 	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
 }
 
-// DisplayName returns the configured name or a name derived from the command.
-func (c ServerConfig) DisplayName() string {
-	if c.Name != "" {
-		return c.Name
+// String is the configured name, else the last argument, else the command.
+func (s Server) String() string {
+	last := ""
+	if len(s.Args) > 0 {
+		last = s.Args[len(s.Args)-1]
 	}
-	if len(c.Args) > 0 {
-		return c.Args[len(c.Args)-1]
-	}
-	return c.Command
+	return cmp.Or(s.Name, last, s.Command)
 }
 
-// ParseServers parses a JSON array of ServerConfig, or "@path" to a file.
-func ParseServers(raw string) ([]ServerConfig, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, nil
-	}
-	var data []byte
-	if strings.HasPrefix(raw, "@") {
-		path := raw[1:]
-		if strings.HasPrefix(path, "~") {
-			home, _ := os.UserHomeDir()
-			path = home + path[1:]
-		}
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("read MCP config: %w", err)
-		}
-		data = b
-	} else {
-		data = []byte(raw)
-	}
-	var servers []ServerConfig
-	if err := json.Unmarshal(data, &servers); err != nil {
-		return nil, fmt.Errorf("parse MCP config: %w", err)
-	}
-	for i := range servers {
-		if servers[i].Command == "" {
-			return nil, fmt.Errorf("MCP server %d: missing command", i)
-		}
-	}
-	return servers, nil
-}
-
-// Tool is a tool exposed by an MCP server.
+// Tool is a tool a server exposes.
 type Tool struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	InputSchema map[string]any `json:"inputSchema"`
 }
 
-type rpcRequest struct {
-	JSONRPC string `json:"jsonrpc"`
-	ID      *int64 `json:"id,omitempty"`
-	Method  string `json:"method"`
-	Params  any    `json:"params,omitempty"`
-}
-
-type rpcMessage struct {
+type message struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
 	Method  string          `json:"method,omitempty"`
@@ -104,39 +64,41 @@ type rpcError struct {
 
 func (e *rpcError) Error() string { return fmt.Sprintf("mcp: %s (code %d)", e.Message, e.Code) }
 
-// Client is a connection to one MCP server.
+func raw(v any) json.RawMessage {
+	b, _ := json.Marshal(v)
+	return b
+}
+
+// Client talks to one server process.
 type Client struct {
-	cfg ServerConfig
+	Server
 
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
+	writes sync.Mutex
 	nextID atomic.Int64
 
 	mu      sync.Mutex
-	pending map[int64]chan rpcMessage
+	pending map[int64]chan message
 	tools   []Tool
 	closed  bool
-	done    chan struct{}
-	writeMu sync.Mutex
+	exited  chan struct{}
 }
 
-// NewClient creates an unstarted client.
-func NewClient(cfg ServerConfig) *Client {
-	return &Client{cfg: cfg, pending: map[int64]chan rpcMessage{}, done: make(chan struct{})}
+// NewClient prepares a client; Start launches the server.
+func NewClient(s Server) *Client {
+	return &Client{Server: s, pending: map[int64]chan message{}, exited: make(chan struct{})}
 }
 
-// Name returns the server's display name.
-func (c *Client) Name() string { return c.cfg.DisplayName() }
-
-// Start launches the server process, performs the initialize handshake and
-// caches the tool list.
+// Start launches the server, performs the initialize handshake and
+// fetches its tools.
 func (c *Client) Start(ctx context.Context) error {
-	cmd := exec.Command(c.cfg.Command, c.cfg.Args...)
+	cmd := exec.Command(c.Command, c.Args...)
 	cmd.Env = os.Environ()
-	for k, v := range c.cfg.Env {
+	for k, v := range c.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
-	cmd.Stderr = &logWriter{name: c.Name()}
+	cmd.Stderr = stderrLog{c.String()}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -146,262 +108,231 @@ func (c *Client) Start(ctx context.Context) error {
 		return err
 	}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start MCP server %s: %w", c.Name(), err)
+		return fmt.Errorf("start MCP server %s: %w", c, err)
 	}
-	c.cmd = cmd
-	c.stdin = stdin
-	go c.readLoop(stdout)
+	c.cmd, c.stdin = cmd, stdin
+	go c.read(stdout)
 
-	initParams := map[string]any{
+	_, err = c.request(ctx, "initialize", map[string]any{
 		"protocolVersion": ProtocolVersion,
 		"capabilities":    map[string]any{},
 		"clientInfo":      map[string]any{"name": "ovi", "version": "0.1.0"},
+	})
+	if err == nil {
+		err = c.send(message{JSONRPC: "2.0", Method: "notifications/initialized", Params: raw(map[string]any{})})
 	}
-	if _, err := c.call(ctx, "initialize", initParams); err != nil {
-		_ = c.Close()
-		return fmt.Errorf("initialize MCP server %s: %w", c.Name(), err)
+	if err == nil {
+		err = c.refreshTools(ctx)
 	}
-	if err := c.notify("notifications/initialized", map[string]any{}); err != nil {
-		_ = c.Close()
-		return err
-	}
-	tools, err := c.listTools(ctx)
 	if err != nil {
 		_ = c.Close()
-		return fmt.Errorf("list tools for MCP server %s: %w", c.Name(), err)
+		return fmt.Errorf("MCP server %s: %w", c, err)
 	}
-	c.mu.Lock()
-	c.tools = tools
-	c.mu.Unlock()
 	return nil
 }
 
-// Tools returns the cached tool list.
+// Tools lists the server's tools.
 func (c *Client) Tools() []Tool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]Tool(nil), c.tools...)
 }
 
-func (c *Client) listTools(ctx context.Context) ([]Tool, error) {
+func (c *Client) refreshTools(ctx context.Context) error {
 	var all []Tool
 	params := map[string]any{}
 	for {
-		raw, err := c.call(ctx, "tools/list", params)
+		res, err := c.request(ctx, "tools/list", params)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		var res struct {
+		var page struct {
 			Tools      []Tool `json:"tools"`
 			NextCursor string `json:"nextCursor"`
 		}
-		if err := json.Unmarshal(raw, &res); err != nil {
-			return nil, err
+		if err := json.Unmarshal(res, &page); err != nil {
+			return err
 		}
-		all = append(all, res.Tools...)
-		if res.NextCursor == "" {
-			return all, nil
+		all = append(all, page.Tools...)
+		if page.NextCursor == "" {
+			break
 		}
-		params = map[string]any{"cursor": res.NextCursor}
+		params = map[string]any{"cursor": page.NextCursor}
 	}
+	c.mu.Lock()
+	c.tools = all
+	c.mu.Unlock()
+	return nil
 }
 
-// CallTool invokes a tool and returns its text content.
-func (c *Client) CallTool(ctx context.Context, name string, args map[string]any) (string, error) {
+// Call invokes a tool and returns its text content; a tool-reported
+// failure comes back as both text and error.
+func (c *Client) Call(ctx context.Context, name string, args map[string]any) (string, error) {
 	if args == nil {
 		args = map[string]any{}
 	}
-	raw, err := c.call(ctx, "tools/call", map[string]any{"name": name, "arguments": args})
+	res, err := c.request(ctx, "tools/call", map[string]any{"name": name, "arguments": args})
 	if err != nil {
 		return "", err
 	}
-	var res struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-		IsError bool `json:"isError"`
+	var out struct {
+		Content []struct{ Type, Text string } `json:"content"`
+		IsError bool                          `json:"isError"`
 	}
-	if err := json.Unmarshal(raw, &res); err != nil {
+	if err := json.Unmarshal(res, &out); err != nil {
 		return "", err
 	}
-	var parts []string
-	for _, item := range res.Content {
-		if item.Type == "text" {
-			parts = append(parts, item.Text)
-		} else {
-			parts = append(parts, fmt.Sprintf("[%s content omitted]", item.Type))
+	parts := make([]string, len(out.Content))
+	for i, item := range out.Content {
+		parts[i] = item.Text
+		if item.Type != "text" {
+			parts[i] = fmt.Sprintf("[%s content omitted]", item.Type)
 		}
 	}
 	text := strings.Join(parts, "\n")
-	if res.IsError {
+	if out.IsError {
 		return text, fmt.Errorf("mcp tool %s failed: %s", name, text)
 	}
 	return text, nil
 }
 
-// Close terminates the server process.
+// Close stops the server, killing it if it ignores a closed stdin.
 func (c *Client) Close() error {
 	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		return nil
-	}
+	closed := c.closed
 	c.closed = true
 	c.mu.Unlock()
-	if c.stdin != nil {
-		_ = c.stdin.Close()
+	if closed || c.cmd == nil {
+		return nil
 	}
-	if c.cmd != nil && c.cmd.Process != nil {
-		select {
-		case <-c.done:
-		case <-time.After(3 * time.Second):
-			slog.Debug("MCP server did not stop cleanly, killing", "name", c.Name())
-			_ = c.cmd.Process.Kill()
-			<-c.done
-		}
+	_ = c.stdin.Close()
+	select {
+	case <-c.exited:
+	case <-time.After(3 * time.Second):
+		slog.Debug("MCP server did not stop, killing", "name", c.String())
+		_ = c.cmd.Process.Kill()
+		<-c.exited
 	}
 	return nil
 }
 
-func (c *Client) send(msg any) error {
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
+func (c *Client) send(m message) error {
+	c.writes.Lock()
+	defer c.writes.Unlock()
 	if c.stdin == nil {
 		return errors.New("mcp: not started")
 	}
-	_, err = c.stdin.Write(append(data, '\n'))
+	_, err := c.stdin.Write(append(raw(m), '\n'))
 	return err
 }
 
-func (c *Client) notify(method string, params any) error {
-	return c.send(rpcRequest{JSONRPC: "2.0", Method: method, Params: params})
-}
-
-func (c *Client) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+// request sends a call and waits for its reply.
+func (c *Client) request(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	id := c.nextID.Add(1)
-	ch := make(chan rpcMessage, 1)
+	reply := make(chan message, 1)
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return nil, errors.New("mcp: client closed")
 	}
-	c.pending[id] = ch
+	c.pending[id] = reply
 	c.mu.Unlock()
-	if err := c.send(rpcRequest{JSONRPC: "2.0", ID: &id, Method: method, Params: params}); err != nil {
+	forget := func() {
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
+	}
+	m := message{JSONRPC: "2.0", ID: json.RawMessage(strconv.FormatInt(id, 10)), Method: method, Params: raw(params)}
+	if err := c.send(m); err != nil {
+		forget()
 		return nil, err
 	}
 	select {
 	case <-ctx.Done():
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
+		forget()
 		return nil, ctx.Err()
-	case <-c.done:
-		return nil, fmt.Errorf("mcp: server %s exited", c.Name())
-	case msg := <-ch:
-		if msg.Error != nil {
-			return nil, msg.Error
+	case <-c.exited:
+		return nil, fmt.Errorf("mcp: server %s exited", c)
+	case m := <-reply:
+		if m.Error != nil {
+			return nil, m.Error
 		}
-		return msg.Result, nil
+		return m.Result, nil
 	}
 }
 
-func (c *Client) readLoop(stdout io.Reader) {
+// read dispatches server output until the process exits.
+func (c *Client) read(stdout io.Reader) {
 	defer func() {
-		if c.cmd != nil {
-			_ = c.cmd.Wait()
-		}
+		_ = c.cmd.Wait()
 		c.mu.Lock()
 		for id, ch := range c.pending {
 			close(ch)
 			delete(c.pending, id)
 		}
 		c.mu.Unlock()
-		close(c.done)
+		close(c.exited)
 	}()
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 0, 64<<10), 32<<20)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
+	sc := bufio.NewScanner(stdout)
+	sc.Buffer(nil, 32<<20)
+	for sc.Scan() {
+		var m message
+		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
+			slog.Debug("MCP: non-JSON line from server", "name", c.String(), "line", sc.Text())
 			continue
 		}
-		var msg rpcMessage
-		if err := json.Unmarshal([]byte(line), &msg); err != nil {
-			slog.Debug("MCP: non-JSON line from server", "name", c.Name(), "line", line)
+		if m.Method != "" {
+			c.serve(m)
 			continue
 		}
-		if msg.Method != "" {
-			c.handleServerMessage(msg)
-			continue
-		}
-		var id int64
-		if err := json.Unmarshal(msg.ID, &id); err != nil {
+		id, err := strconv.ParseInt(string(m.ID), 10, 64)
+		if err != nil {
 			continue
 		}
 		c.mu.Lock()
-		ch, ok := c.pending[id]
+		reply, ok := c.pending[id]
 		delete(c.pending, id)
 		c.mu.Unlock()
 		if ok {
-			ch <- msg
+			reply <- m
 		}
 	}
 }
 
-// handleServerMessage deals with server-initiated requests and notifications.
-func (c *Client) handleServerMessage(msg rpcMessage) {
-	if len(msg.ID) == 0 || string(msg.ID) == "null" {
-		switch msg.Method {
+// serve answers server-initiated requests and notifications.
+func (c *Client) serve(m message) {
+	if len(m.ID) == 0 || string(m.ID) == "null" { // notification
+		switch m.Method {
 		case "notifications/tools/list_changed":
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
-				if tools, err := c.listTools(ctx); err == nil {
-					c.mu.Lock()
-					c.tools = tools
-					c.mu.Unlock()
-				}
+				_ = c.refreshTools(ctx)
 			}()
 		case "notifications/message":
-			var p struct {
-				Level string `json:"level"`
-				Data  any    `json:"data"`
-			}
-			_ = json.Unmarshal(msg.Params, &p)
-			slog.Debug("MCP server log", "name", c.Name(), "level", p.Level, "data", p.Data)
+			slog.Debug("MCP server log", "name", c.String(), "params", string(m.Params))
 		}
 		return
 	}
-	// Requests we do not support: answer with method-not-found so the
-	// server does not hang.
-	switch msg.Method {
+	reply := message{JSONRPC: "2.0", ID: m.ID}
+	switch m.Method {
 	case "ping":
-		_ = c.send(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{}})
+		reply.Result = raw(map[string]any{})
 	case "roots/list":
-		_ = c.send(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{"roots": []any{}}})
+		reply.Result = raw(map[string]any{"roots": []any{}})
 	default:
-		_ = c.send(map[string]any{
-			"jsonrpc": "2.0", "id": msg.ID,
-			"error": map[string]any{"code": -32601, "message": "method not supported: " + msg.Method},
-		})
+		reply.Error = &rpcError{Code: -32601, Message: "method not supported: " + m.Method}
 	}
+	_ = c.send(reply)
 }
 
-type logWriter struct{ name string }
+// stderrLog relays the server's stderr to the debug log.
+type stderrLog struct{ name string }
 
-func (w *logWriter) Write(p []byte) (int, error) {
-	for _, line := range strings.Split(strings.TrimRight(string(p), "\n"), "\n") {
+func (l stderrLog) Write(p []byte) (int, error) {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(p)), "\n") {
 		if line != "" {
-			slog.Debug("MCP stderr", "name", w.name, "line", line)
+			slog.Debug("MCP stderr", "name", l.name, "line", line)
 		}
 	}
 	return len(p), nil

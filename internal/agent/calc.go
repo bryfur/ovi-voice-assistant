@@ -6,242 +6,67 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"unicode"
 )
 
-// calculate evaluates a math expression supporting + - * / % **, parentheses,
-// and the functions sqrt, abs, round, sin, cos, tan, log, log10, log2, ceil,
-// floor plus the constants pi and e.
+// calculate evaluates arithmetic with + - * / // % **, parentheses, the
+// constants pi and e, and the functions sqrt abs round sin cos tan log
+// log10 log2 ceil floor. Precedence and associativity follow Python.
 func calculate(expr string) (string, error) {
-	p := &calcParser{src: []rune(expr)}
-	p.skipSpace()
-	if p.eof() {
+	p := &parser{src: expr}
+	if p.skip(); p.done() {
 		return "", errors.New("empty expression")
 	}
-	v, err := p.parseExpr()
+	v, err := p.expr(1)
 	if err != nil {
 		return "", err
 	}
-	p.skipSpace()
-	if !p.eof() {
-		return "", fmt.Errorf("unexpected %q", string(p.src[p.pos]))
+	if p.skip(); !p.done() {
+		return "", fmt.Errorf("unexpected %q", p.src[p.pos:p.pos+1])
 	}
 	return formatNumber(v), nil
 }
 
 func formatNumber(v float64) string {
-	if math.IsNaN(v) {
-		return "nan"
-	}
-	if math.IsInf(v, 0) {
-		if v > 0 {
-			return "inf"
-		}
-		return "-inf"
-	}
 	if v == math.Trunc(v) && math.Abs(v) < 1e18 {
 		return strconv.FormatInt(int64(v), 10)
 	}
 	return strconv.FormatFloat(v, 'g', -1, 64)
 }
 
-type calcParser struct {
-	src []rune
+type parser struct {
+	src string
 	pos int
 }
 
-func (p *calcParser) eof() bool { return p.pos >= len(p.src) }
-
-func (p *calcParser) skipSpace() {
-	for !p.eof() && unicode.IsSpace(p.src[p.pos]) {
-		p.pos++
-	}
+// binary operators by precedence; ** is handled in unary so that -2**2
+// is -4 and 2**3**2 groups to the right.
+var binaryOps = map[string]struct {
+	prec int
+	eval func(a, b float64) (float64, error)
+}{
+	"+":  {1, func(a, b float64) (float64, error) { return a + b, nil }},
+	"-":  {1, func(a, b float64) (float64, error) { return a - b, nil }},
+	"*":  {2, func(a, b float64) (float64, error) { return a * b, nil }},
+	"/":  {2, divide(func(a, b float64) float64 { return a / b })},
+	"//": {2, divide(func(a, b float64) float64 { return math.Floor(a / b) })},
+	"%":  {2, divide(func(a, b float64) float64 { return a - b*math.Floor(a/b) })},
 }
 
-func (p *calcParser) peek(s string) bool {
-	p.skipSpace()
-	return strings.HasPrefix(string(p.src[p.pos:]), s)
-}
-
-func (p *calcParser) accept(s string) bool {
-	if p.peek(s) {
-		p.pos += len([]rune(s))
-		return true
-	}
-	return false
-}
-
-// expr := term (('+' | '-') term)*
-func (p *calcParser) parseExpr() (float64, error) {
-	left, err := p.parseTerm()
-	if err != nil {
-		return 0, err
-	}
-	for {
-		if p.accept("+") {
-			r, err := p.parseTerm()
-			if err != nil {
-				return 0, err
-			}
-			left += r
-		} else if p.accept("-") {
-			r, err := p.parseTerm()
-			if err != nil {
-				return 0, err
-			}
-			left -= r
-		} else {
-			return left, nil
+func divide(f func(a, b float64) float64) func(a, b float64) (float64, error) {
+	return func(a, b float64) (float64, error) {
+		if b == 0 {
+			return 0, errors.New("division by zero")
 		}
+		return f(a, b), nil
 	}
 }
 
-// term := unary (('*' | '/' | '//' | '%') unary)*
-func (p *calcParser) parseTerm() (float64, error) {
-	left, err := p.parseUnary()
-	if err != nil {
-		return 0, err
-	}
-	for {
-		switch {
-		case p.peek("**"):
-			return left, nil
-		case p.accept("*"):
-			r, err := p.parseUnary()
-			if err != nil {
-				return 0, err
-			}
-			left *= r
-		case p.accept("//"):
-			r, err := p.parseUnary()
-			if err != nil {
-				return 0, err
-			}
-			if r == 0 {
-				return 0, errors.New("division by zero")
-			}
-			left = math.Floor(left / r)
-		case p.accept("/"):
-			r, err := p.parseUnary()
-			if err != nil {
-				return 0, err
-			}
-			if r == 0 {
-				return 0, errors.New("division by zero")
-			}
-			left /= r
-		case p.accept("%"):
-			r, err := p.parseUnary()
-			if err != nil {
-				return 0, err
-			}
-			if r == 0 {
-				return 0, errors.New("modulo by zero")
-			}
-			m := math.Mod(left, r)
-			if m != 0 && (m < 0) != (r < 0) {
-				m += r
-			}
-			left = m
-		default:
-			return left, nil
-		}
-	}
-}
+var constants = map[string]float64{"pi": math.Pi, "e": math.E}
 
-// unary := ('-' | '+') unary | power
-func (p *calcParser) parseUnary() (float64, error) {
-	if p.accept("-") {
-		v, err := p.parseUnary()
-		return -v, err
-	}
-	if p.accept("+") {
-		return p.parseUnary()
-	}
-	return p.parsePower()
-}
-
-// power := atom ('**' unary)?   (right-associative)
-func (p *calcParser) parsePower() (float64, error) {
-	base, err := p.parseAtom()
-	if err != nil {
-		return 0, err
-	}
-	if p.accept("**") {
-		exp, err := p.parseUnary()
-		if err != nil {
-			return 0, err
-		}
-		return math.Pow(base, exp), nil
-	}
-	return base, nil
-}
-
-func (p *calcParser) parseAtom() (float64, error) {
-	p.skipSpace()
-	if p.eof() {
-		return 0, errors.New("unexpected end of expression")
-	}
-	c := p.src[p.pos]
-	if c == '(' {
-		p.pos++
-		v, err := p.parseExpr()
-		if err != nil {
-			return 0, err
-		}
-		if !p.accept(")") {
-			return 0, errors.New("missing closing parenthesis")
-		}
-		return v, nil
-	}
-	if unicode.IsDigit(c) || c == '.' {
-		return p.parseNumber()
-	}
-	if unicode.IsLetter(c) || c == '_' {
-		return p.parseIdent()
-	}
-	return 0, fmt.Errorf("unexpected %q", string(c))
-}
-
-func (p *calcParser) parseNumber() (float64, error) {
-	start := p.pos
-	for !p.eof() && (unicode.IsDigit(p.src[p.pos]) || p.src[p.pos] == '.' || p.src[p.pos] == '_') {
-		p.pos++
-	}
-	if !p.eof() && (p.src[p.pos] == 'e' || p.src[p.pos] == 'E') {
-		save := p.pos
-		p.pos++
-		if !p.eof() && (p.src[p.pos] == '+' || p.src[p.pos] == '-') {
-			p.pos++
-		}
-		if p.eof() || !unicode.IsDigit(p.src[p.pos]) {
-			p.pos = save
-		} else {
-			for !p.eof() && unicode.IsDigit(p.src[p.pos]) {
-				p.pos++
-			}
-		}
-	}
-	text := strings.ReplaceAll(string(p.src[start:p.pos]), "_", "")
-	v, err := strconv.ParseFloat(text, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid number %q", text)
-	}
-	return v, nil
-}
-
-var calcConstants = map[string]float64{"pi": math.Pi, "e": math.E}
-
-var calcFunctions = map[string]func(args []float64) (float64, error){
-	"sqrt":  unaryFn(math.Sqrt),
-	"abs":   unaryFn(math.Abs),
-	"sin":   unaryFn(math.Sin),
-	"cos":   unaryFn(math.Cos),
-	"tan":   unaryFn(math.Tan),
-	"log10": unaryFn(math.Log10),
-	"log2":  unaryFn(math.Log2),
-	"ceil":  unaryFn(math.Ceil),
-	"floor": unaryFn(math.Floor),
+var functions = map[string]func(args []float64) (float64, error){
+	"sqrt": unary(math.Sqrt), "abs": unary(math.Abs), "sin": unary(math.Sin), "cos": unary(math.Cos),
+	"tan": unary(math.Tan), "log10": unary(math.Log10), "log2": unary(math.Log2),
+	"ceil": unary(math.Ceil), "floor": unary(math.Floor),
 	"log": func(args []float64) (float64, error) {
 		switch len(args) {
 		case 1:
@@ -263,7 +88,7 @@ var calcFunctions = map[string]func(args []float64) (float64, error){
 	},
 }
 
-func unaryFn(f func(float64) float64) func([]float64) (float64, error) {
+func unary(f func(float64) float64) func([]float64) (float64, error) {
 	return func(args []float64) (float64, error) {
 		if len(args) != 1 {
 			return 0, errors.New("expected exactly 1 argument")
@@ -272,41 +97,132 @@ func unaryFn(f func(float64) float64) func([]float64) (float64, error) {
 	}
 }
 
-func (p *calcParser) parseIdent() (float64, error) {
-	start := p.pos
-	for !p.eof() && (unicode.IsLetter(p.src[p.pos]) || unicode.IsDigit(p.src[p.pos]) || p.src[p.pos] == '_') {
+func (p *parser) done() bool { return p.pos >= len(p.src) }
+
+func (p *parser) skip() {
+	for !p.done() && p.src[p.pos] == ' ' {
 		p.pos++
 	}
-	name := string(p.src[start:p.pos])
+}
+
+func (p *parser) accept(s string) bool {
+	p.skip()
+	if strings.HasPrefix(p.src[p.pos:], s) {
+		p.pos += len(s)
+		return true
+	}
+	return false
+}
+
+// expr parses binary operators of at least minPrec by precedence climbing.
+func (p *parser) expr(minPrec int) (float64, error) {
+	left, err := p.unary()
+	for err == nil {
+		p.skip()
+		op := ""
+		for candidate := range binaryOps {
+			if strings.HasPrefix(p.src[p.pos:], candidate) && len(candidate) > len(op) {
+				op = candidate
+			}
+		}
+		if op == "" || binaryOps[op].prec < minPrec || strings.HasPrefix(p.src[p.pos:], "**") {
+			return left, nil
+		}
+		p.pos += len(op)
+		var right float64
+		if right, err = p.expr(binaryOps[op].prec + 1); err == nil {
+			left, err = binaryOps[op].eval(left, right)
+		}
+	}
+	return 0, err
+}
+
+// unary parses signs and the right-associative power operator.
+func (p *parser) unary() (float64, error) {
+	if p.accept("-") {
+		v, err := p.unary()
+		return -v, err
+	}
+	if p.accept("+") {
+		return p.unary()
+	}
+	base, err := p.atom()
+	if err == nil && p.accept("**") {
+		var exp float64
+		if exp, err = p.unary(); err == nil {
+			return math.Pow(base, exp), nil
+		}
+	}
+	return base, err
+}
+
+// atom parses a parenthesised expression, a number, a constant or a call.
+func (p *parser) atom() (float64, error) {
 	if p.accept("(") {
-		fn, ok := calcFunctions[name]
+		v, err := p.expr(1)
+		if err == nil && !p.accept(")") {
+			err = errors.New("missing closing parenthesis")
+		}
+		return v, err
+	}
+	if p.done() {
+		return 0, errors.New("unexpected end of expression")
+	}
+	start := p.pos
+	switch c := p.src[p.pos]; {
+	case isDigit(c) || c == '.':
+		for !p.done() && (isDigit(p.src[p.pos]) || strings.ContainsRune("._", rune(p.src[p.pos]))) {
+			p.pos++
+		}
+		if !p.done() && (p.src[p.pos]|0x20) == 'e' { // exponent
+			end := p.pos + 1
+			if end < len(p.src) && (p.src[end] == '+' || p.src[end] == '-') {
+				end++
+			}
+			for end < len(p.src) && isDigit(p.src[end]) {
+				end++
+			}
+			if isDigit(p.src[end-1]) {
+				p.pos = end
+			}
+		}
+		text := strings.ReplaceAll(p.src[start:p.pos], "_", "")
+		v, err := strconv.ParseFloat(text, 64)
+		if err != nil {
+			return 0, fmt.Errorf("invalid number %q", text)
+		}
+		return v, nil
+	case isLetter(c):
+		for !p.done() && (isLetter(p.src[p.pos]) || isDigit(p.src[p.pos])) {
+			p.pos++
+		}
+		name := p.src[start:p.pos]
+		if !p.accept("(") {
+			if v, ok := constants[name]; ok {
+				return v, nil
+			}
+			return 0, fmt.Errorf("name '%s' is not defined", name)
+		}
+		fn, ok := functions[name]
 		if !ok {
 			return 0, fmt.Errorf("name '%s' is not defined", name)
 		}
 		var args []float64
-		if !p.accept(")") {
-			for {
-				v, err := p.parseExpr()
-				if err != nil {
-					return 0, err
-				}
-				args = append(args, v)
-				if p.accept(",") {
-					continue
-				}
-				if p.accept(")") {
-					break
-				}
+		for !p.accept(")") {
+			if len(args) > 0 && !p.accept(",") {
 				return 0, errors.New("missing closing parenthesis")
 			}
+			v, err := p.expr(1)
+			if err != nil {
+				return 0, err
+			}
+			args = append(args, v)
 		}
 		return fn(args)
+	default:
+		return 0, fmt.Errorf("unexpected %q", string(c))
 	}
-	if v, ok := calcConstants[name]; ok {
-		return v, nil
-	}
-	if p.peek(".") || p.peek("[") {
-		return 0, errors.New("attribute access and indexing are not allowed")
-	}
-	return 0, fmt.Errorf("name '%s' is not defined", name)
 }
+
+func isDigit(c byte) bool  { return '0' <= c && c <= '9' }
+func isLetter(c byte) bool { return c == '_' || 'a' <= c|0x20 && c|0x20 <= 'z' }

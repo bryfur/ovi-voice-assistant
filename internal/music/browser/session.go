@@ -7,59 +7,48 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/bryfur/ovi-voice-assistant/internal/device"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/coder/websocket"
+
+	"github.com/bryfur/ovi-voice-assistant/internal/device"
+	"github.com/bryfur/ovi-voice-assistant/internal/music"
 )
 
-// ProfileRoot holds persistent browser profiles.
-var ProfileRoot = "~/.config/ovi"
-
+// captureJS grabs the tab's own audio and ships it as s16le PCM over a
+// local WebSocket, after one JSON line announcing the format.
 const captureJS = `
 async (wsPort) => {
   const stream = await navigator.mediaDevices.getDisplayMedia({
-    audio: {
-      echoCancellation: false,
-      noiseSuppression: false,
-      autoGainControl: false,
-      suppressLocalAudioPlayback: true,
-    },
+    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false,
+             suppressLocalAudioPlayback: true },
     video: true,
     preferCurrentTab: true,
   });
   stream.getVideoTracks().forEach(t => t.stop());
-
-  const audioTrack = stream.getAudioTracks()[0];
-  const settings = audioTrack?.getSettings?.() || {};
-  const channels = settings.channelCount || 2;
-  console.log('[ovi] audio track:', audioTrack?.label,
-              'channels:', channels, 'sampleRate:', settings.sampleRate);
+  const track = stream.getAudioTracks()[0];
+  const channels = track?.getSettings?.().channelCount || 2;
 
   const ctx = new AudioContext();
   const source = ctx.createMediaStreamSource(stream);
   const proc = ctx.createScriptProcessor(4096, channels, channels);
-
   const ws = new WebSocket('ws://127.0.0.1:' + wsPort);
   ws.binaryType = 'arraybuffer';
   await new Promise((res, rej) => {
     ws.addEventListener('open', res);
     ws.addEventListener('error', () => rej(new Error('WebSocket connection failed')));
   });
-
-  ws.send(JSON.stringify({
-    sampleRate: ctx.sampleRate,
-    channels: channels,
-  }));
+  ws.send(JSON.stringify({ sampleRate: ctx.sampleRate, channels }));
 
   proc.onaudioprocess = (e) => {
     const len = e.inputBuffer.getChannelData(0).length;
@@ -78,196 +67,133 @@ async (wsPort) => {
 }
 `
 
-// Session is the shared machinery for streaming music via browser
-// tab audio capture.
-//
-// It launches Chromium (chromedp), navigates to a music service, captures
-// tab audio with getDisplayMedia, and streams s16le PCM over a local
-// WebSocket back to Go. Providers supply service-specific search / play
-// logic.
+// Session is a Chromium tab on a music service plus the audio bridge that
+// receives its captured sound.
 type Session struct {
-	URL         string
-	ProfileName string
+	url, profile, stopJS string
 
-	sampleRate int
-
-	allocCancel context.CancelFunc
-	ctxCancel   context.CancelFunc
-	pageCtx     context.Context
-
-	httpServer *http.Server
-	wsPort     int
-
-	mu                sync.Mutex
-	audioQueue        chan []byte
-	captureActive     bool
-	browserSampleRate int
-	browserChannels   int
+	tab       context.Context // chromedp context; nil until launched
+	quit      func()
+	server    *http.Server
+	port      int
+	audio     chan []byte // captured PCM; nil marks the end of a capture
+	capturing atomic.Bool
 }
 
-// NewSession creates an unstarted session.
-func NewSession(url, profileName string, sampleRate int) *Session {
-	return &Session{
-		URL:               url,
-		ProfileName:       profileName,
-		sampleRate:        sampleRate,
-		audioQueue:        make(chan []byte, 256),
-		browserSampleRate: 48000,
-		browserChannels:   2,
-	}
+func newSession(url, profile, stopJS string) *Session {
+	return &Session{url: url, profile: profile, stopJS: stopJS, audio: make(chan []byte, 256)}
 }
 
-// Start launches the browser, opens the music service and starts the
-// WebSocket audio bridge.
-func (b *Session) Start(ctx context.Context) error {
+// launch starts the audio bridge and opens the service in a persistent
+// browser profile, so logins survive restarts.
+func (s *Session) launch() error {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
 	}
-	b.wsPort = ln.Addr().(*net.TCPAddr).Port
-	b.httpServer = &http.Server{Handler: http.HandlerFunc(b.wsHandler)}
-	go func() { _ = b.httpServer.Serve(ln) }()
-	slog.Info("Audio bridge listening", "url", fmt.Sprintf("ws://127.0.0.1:%d", b.wsPort))
+	s.port = ln.Addr().(*net.TCPAddr).Port
+	s.server = &http.Server{Handler: http.HandlerFunc(s.bridge)}
+	go func() { _ = s.server.Serve(ln) }()
 
-	profile := filepath.Join(expandUser(ProfileRoot), b.ProfileName)
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return err
+	}
+	profile := filepath.Join(dir, "ovi", s.profile)
 	if err := os.MkdirAll(profile, 0o755); err != nil {
 		return err
 	}
-	opts := []chromedp.ExecAllocatorOption{
-		chromedp.NoFirstRun,
-		chromedp.NoDefaultBrowserCheck,
-		chromedp.UserDataDir(profile),
+	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(),
+		chromedp.NoFirstRun, chromedp.NoDefaultBrowserCheck, chromedp.UserDataDir(profile),
 		chromedp.Flag("headless", false),
 		chromedp.Flag("auto-accept-this-tab-capture", true),
-		chromedp.Flag("autoplay-policy", "no-user-gesture-required"),
-	}
-	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
-	pageCtx, pageCancel := chromedp.NewContext(allocCtx)
-	b.allocCancel = allocCancel
-	b.ctxCancel = pageCancel
-	b.pageCtx = pageCtx
-
-	if err := chromedp.Run(pageCtx,
-		page.SetBypassCSP(true),
-		chromedp.Navigate(b.URL),
-	); err != nil {
-		b.Close()
+		chromedp.Flag("autoplay-policy", "no-user-gesture-required"))
+	tab, cancelTab := chromedp.NewContext(alloc)
+	s.tab, s.quit = tab, func() { cancelTab(); cancelAlloc() }
+	if err := chromedp.Run(tab, page.SetBypassCSP(true), chromedp.Navigate(s.url)); err != nil {
+		s.Close()
 		return fmt.Errorf("launch browser: %w", err)
 	}
 	return nil
 }
 
-// Close shuts down the browser and WebSocket server.
-func (b *Session) Close() {
-	if b.ctxCancel != nil {
-		b.ctxCancel()
-		b.ctxCancel = nil
+// Close quits the browser and the audio bridge.
+func (s *Session) Close() {
+	if s.quit != nil {
+		s.quit()
+		s.quit, s.tab = nil, nil
 	}
-	if b.allocCancel != nil {
-		b.allocCancel()
-		b.allocCancel = nil
-	}
-	if b.httpServer != nil {
+	if s.server != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		_ = b.httpServer.Shutdown(ctx)
-		cancel()
-		b.httpServer = nil
+		defer cancel()
+		_ = s.server.Shutdown(ctx)
+		s.server = nil
 	}
 }
 
-// Evaluate runs a JS function expression with JSON-encoded arguments and
-// decodes the awaited result into out (which may be nil).
-func (b *Session) Evaluate(ctx context.Context, fn string, out any, args ...any) error {
-	if b.pageCtx == nil {
+// eval calls a JS function expression with JSON-encoded args, awaits it
+// and decodes the result into out (which may be nil).
+func (s *Session) eval(ctx context.Context, fn string, out any, args ...any) error {
+	if s.tab == nil {
 		return errors.New("browser not started")
 	}
-	argJSON := make([]string, len(args))
+	encoded := make([]string, len(args))
 	for i, a := range args {
 		j, err := json.Marshal(a)
 		if err != nil {
 			return err
 		}
-		argJSON[i] = string(j)
+		encoded[i] = string(j)
 	}
-	expr := "(" + fn + ")(" + joinStrings(argJSON, ",") + ")"
-	runCtx, cancel := context.WithCancel(b.pageCtx)
+	run, cancel := context.WithCancel(s.tab)
 	defer cancel()
-	stop := context.AfterFunc(ctx, cancel)
-	defer stop()
+	defer context.AfterFunc(ctx, cancel)()
 	var raw json.RawMessage
-	err := chromedp.Run(runCtx, chromedp.Evaluate(expr, &raw,
+	err := chromedp.Run(run, chromedp.Evaluate("("+fn+")("+strings.Join(encoded, ",")+")", &raw,
 		func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
 			return p.WithAwaitPromise(true).WithReturnByValue(true)
 		}))
-	if err != nil {
+	if err != nil || out == nil || len(raw) == 0 {
 		return err
 	}
-	if out != nil && len(raw) > 0 {
-		return json.Unmarshal(raw, out)
-	}
-	return nil
+	return json.Unmarshal(raw, out)
 }
 
-func joinStrings(parts []string, sep string) string {
-	s := ""
-	for i, p := range parts {
-		if i > 0 {
-			s += sep
-		}
-		s += p
-	}
-	return s
-}
-
-// StreamTrack plays a track (via play) in the browser and forwards captured
-// PCM to output until play returns.
-func (b *Session) StreamTrack(ctx context.Context, output device.Output, play func(ctx context.Context) error) error {
-	if err := b.ensureCapture(ctx); err != nil {
+// play runs playJS(arg) in the tab and forwards captured audio to out
+// until it returns. A cancelled ctx stops playback in the tab too.
+func (s *Session) play(ctx context.Context, out device.Output, playJS string, arg any) error {
+	if err := s.capture(ctx); err != nil {
 		return err
 	}
-	b.drain()
-
-	playCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	playDone := make(chan error, 1)
-	go func() { playDone <- play(playCtx) }()
-
+	s.forward(ctx, nil) // drop stale audio
+	finished := make(chan error, 1)
+	go func() { finished <- s.eval(ctx, playJS, nil, arg) }()
 	for {
 		select {
 		case <-ctx.Done():
+			_ = s.eval(tail(), s.stopJS, nil)
 			return ctx.Err()
-		case err := <-playDone:
-			// Forward any remaining captured audio.
-			b.forwardPending(ctx, output)
+		case err := <-finished:
+			s.forward(ctx, out)
 			return err
-		case data, ok := <-b.audioQueue:
-			if !ok || data == nil {
-				<-playDone
-				return nil
+		case pcm := <-s.audio:
+			if pcm == nil {
+				return <-finished
 			}
-			if err := output.SendAudio(ctx, data); err != nil {
+			if err := out.SendAudio(ctx, pcm); err != nil {
 				return err
 			}
 		}
 	}
 }
 
-func (b *Session) drain() {
+// forward passes already-captured audio to out (nil discards it).
+func (s *Session) forward(ctx context.Context, out device.Output) {
 	for {
 		select {
-		case <-b.audioQueue:
-		default:
-			return
-		}
-	}
-}
-
-func (b *Session) forwardPending(ctx context.Context, output device.Output) {
-	for {
-		select {
-		case data := <-b.audioQueue:
-			if data != nil {
-				_ = output.SendAudio(ctx, data)
+		case pcm := <-s.audio:
+			if pcm != nil && out != nil {
+				_ = out.SendAudio(ctx, pcm)
 			}
 		default:
 			return
@@ -275,77 +201,70 @@ func (b *Session) forwardPending(ctx context.Context, output device.Output) {
 	}
 }
 
-func (b *Session) wsHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Session) capture(ctx context.Context) error {
+	if s.capturing.Load() {
+		return nil
+	}
+	if err := s.eval(ctx, captureJS, nil, s.port); err != nil {
+		return fmt.Errorf("start tab capture: %w", err)
+	}
+	s.capturing.Store(true)
+	return nil
+}
+
+// bridge receives the tab's audio over WebSocket.
+func (s *Session) bridge(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {
 		return
 	}
 	defer conn.CloseNow()
 	conn.SetReadLimit(4 << 20)
-	slog.Info("Browser audio capture connected")
-	first := true
 	for {
 		typ, data, err := conn.Read(r.Context())
 		if err != nil {
 			break
 		}
-		if first && typ == websocket.MessageText {
-			var cfg struct {
-				SampleRate int `json:"sampleRate"`
-				Channels   int `json:"channels"`
+		if typ == websocket.MessageText {
+			var f struct{ SampleRate, Channels int }
+			_ = json.Unmarshal(data, &f)
+			slog.Info("Browser audio capture", "rate", f.SampleRate, "channels", f.Channels)
+			if f.SampleRate != music.Rate || f.Channels != music.Channels {
+				slog.Warn("Browser audio format differs from the music format; playback speed will be off",
+					"want_rate", music.Rate, "want_channels", music.Channels)
 			}
-			if json.Unmarshal(data, &cfg) == nil {
-				b.mu.Lock()
-				if cfg.SampleRate > 0 {
-					b.browserSampleRate = cfg.SampleRate
-				}
-				if cfg.Channels > 0 {
-					b.browserChannels = cfg.Channels
-				}
-				b.mu.Unlock()
-				slog.Info("Browser audio", "rate", cfg.SampleRate, "channels", cfg.Channels)
-			}
-			first = false
 			continue
 		}
-		first = false
-		if typ == websocket.MessageBinary {
-			select {
-			case b.audioQueue <- data:
-			default:
-				slog.Debug("Browser audio queue full, dropping chunk")
-			}
+		select {
+		case s.audio <- data:
+		default:
+			slog.Debug("Browser audio queue full, dropping chunk")
 		}
 	}
 	select {
-	case b.audioQueue <- nil:
+	case s.audio <- nil:
 	default:
 	}
 }
 
-func (b *Session) ensureCapture(ctx context.Context) error {
-	b.mu.Lock()
-	active := b.captureActive
-	b.mu.Unlock()
-	if active {
-		return nil
+// search runs searchJS({query, limit}) and labels the results with service.
+func (s *Session) search(ctx context.Context, searchJS, service, query string, limit int) ([]music.Track, error) {
+	var found []struct {
+		ID, Title, Artist, Album string
+		Duration                 int
 	}
-	if err := b.Evaluate(ctx, captureJS, nil, b.wsPort); err != nil {
-		return fmt.Errorf("start tab capture: %w", err)
+	if err := s.eval(ctx, searchJS, &found, map[string]any{"query": query, "limit": limit}); err != nil {
+		return nil, err
 	}
-	b.mu.Lock()
-	b.captureActive = true
-	b.mu.Unlock()
-	slog.Info("Tab audio capture active")
-	return nil
+	tracks := make([]music.Track, len(found))
+	for i, f := range found {
+		tracks[i] = music.Track{Title: f.Title, Artist: f.Artist, Album: f.Album, Duration: f.Duration, ID: f.ID, Service: service}
+	}
+	return tracks, nil
 }
 
-func expandUser(p string) string {
-	if len(p) > 0 && p[0] == '~' {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			return filepath.Join(home, p[1:])
-		}
-	}
-	return p
+func tail() context.Context {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	context.AfterFunc(ctx, cancel)
+	return ctx
 }

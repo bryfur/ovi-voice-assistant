@@ -1,57 +1,31 @@
+// Package music finds and plays music on the connected devices: YouTube
+// Music through yt-dlp and ffmpeg, Spotify and Apple Music through a
+// captured browser tab (see the browser subpackage).
 package music
 
 import (
 	"context"
-	"fmt"
-	"sync"
+
+	"github.com/bryfur/ovi-voice-assistant/internal/device"
 )
 
-// Browser-based music providers keyed by service name ("apple", "spotify").
-var (
-	browsersMu sync.RWMutex
-	browsers   = map[string]BrowserMusic{}
+// Music plays at a little better than CD quality, in stereo.
+const (
+	Rate     = 48000
+	Channels = 2
 )
 
-// RegisterBrowser registers a browser music provider.
-func RegisterBrowser(service string, b BrowserMusic) {
-	browsersMu.Lock()
-	defer browsersMu.Unlock()
-	browsers[service] = b
+// Track is one playable song.
+type Track struct {
+	Title, Artist, Album string
+	Duration             int    // seconds
+	ID                   string // YouTube video id, or the service's own song id
+	Service              string // "youtube", "spotify" or "apple"
 }
 
-// Browsers returns registered browser providers (for passing to
-// MusicPlayer/MusicGroup).
-func Browsers() map[string]BrowserMusic {
-	browsersMu.RLock()
-	defer browsersMu.RUnlock()
-	out := make(map[string]BrowserMusic, len(browsers))
-	for k, v := range browsers {
-		out[k] = v
-	}
-	return out
-}
-
-// SearchMusicFunc is the search implementation used by the play_music tool.
-// Tests may replace it.
-var SearchMusicFunc = searchMusic
-
-// searchMusic searches for music; service selects the provider.
-func searchMusic(ctx context.Context, query, service string) ([]MusicTrack, error) {
-	if service == "" {
-		service = "youtube"
-	}
-	browsersMu.RLock()
-	b, ok := browsers[service]
-	browsersMu.RUnlock()
-	if ok {
-		return b.Search(ctx, query, 20)
-	}
-	if service == "youtube" {
-		return searchYouTube(ctx, query, 20)
-	}
-	available := []string{"youtube"}
-	for k := range Browsers() {
-		available = append(available, k)
-	}
-	return nil, fmt.Errorf("unknown music service %q (available: %v)", service, available)
+// Service finds tracks and plays them.
+type Service interface {
+	Search(ctx context.Context, query string, limit int) ([]Track, error)
+	// Play streams track into out until it ends or ctx is cancelled.
+	Play(ctx context.Context, track Track, out device.Output) error
 }

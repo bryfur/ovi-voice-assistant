@@ -1,24 +1,30 @@
 package browser
 
-import (
-	"context"
-	"github.com/bryfur/ovi-voice-assistant/internal/device"
-	"github.com/bryfur/ovi-voice-assistant/internal/music"
-)
+import "github.com/bryfur/ovi-voice-assistant/internal/music"
 
-// Grab an access token from Spotify's internal endpoint, then hit the Web API.
+// Spotify plays through open.spotify.com, using the page's own access
+// token against the Web API.
+func Spotify() *Provider {
+	return &Provider{
+		Session:  newSession("https://open.spotify.com", "spotify-profile", spotifyStopJS),
+		name:     "spotify",
+		searchJS: spotifySearchJS,
+		playJS:   spotifyPlayJS,
+		playArg: func(t music.Track) any {
+			return map[string]any{"uri": "spotify:track:" + t.ID, "durationSec": t.Duration}
+		},
+	}
+}
+
 const spotifySearchJS = `
 async ({ query, limit }) => {
-  const tokenRes = await fetch('/get_access_token');
-  const { accessToken } = await tokenRes.json();
+  const { accessToken } = await (await fetch('/get_access_token')).json();
   const res = await fetch(
     'https://api.spotify.com/v1/search?q=' + encodeURIComponent(query) + '&type=track&limit=' + limit,
-    { headers: { Authorization: 'Bearer ' + accessToken } },
-  );
+    { headers: { Authorization: 'Bearer ' + accessToken } });
   const data = await res.json();
   return (data.tracks?.items || []).map(t => ({
     id: t.id,
-    uri: t.uri,
     title: t.name,
     artist: t.artists.map(a => a.name).join(', '),
     album: t.album?.name || '',
@@ -27,45 +33,27 @@ async ({ query, limit }) => {
 }
 `
 
-// Play a track via Spotify Connect Web API, then poll until it finishes.
+// Start the track on the web player, then poll until it stops.
 const spotifyPlayJS = `
 async ({ uri, durationSec }) => {
-  const tokenRes = await fetch('/get_access_token');
-  const { accessToken } = await tokenRes.json();
+  const { accessToken } = await (await fetch('/get_access_token')).json();
   const headers = { Authorization: 'Bearer ' + accessToken };
-
-  // Find the web player device
-  const devRes = await fetch(
-    'https://api.spotify.com/v1/me/player/devices', { headers },
-  );
-  const { devices } = await devRes.json();
+  const { devices } = await (await fetch('https://api.spotify.com/v1/me/player/devices', { headers })).json();
   const device = devices?.find(d => d.type === 'Computer');
-  const qs = device ? '?device_id=' + device.id : '';
-
-  // Start playback
-  await fetch('https://api.spotify.com/v1/me/player/play' + qs, {
+  await fetch('https://api.spotify.com/v1/me/player/play' + (device ? '?device_id=' + device.id : ''), {
     method: 'PUT',
     headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({ uris: [uri] }),
   });
-
-  // Poll until the track ends
   await new Promise(resolve => {
     let elapsed = 0;
     const iv = setInterval(async () => {
       elapsed += 2;
       try {
-        const r = await fetch(
-          'https://api.spotify.com/v1/me/player', { headers },
-        );
-        if (!r.ok) return;
-        const s = await r.json();
-        if (!s.is_playing) { clearInterval(iv); resolve(); }
+        const r = await fetch('https://api.spotify.com/v1/me/player', { headers });
+        if (r.ok && !(await r.json()).is_playing) { clearInterval(iv); resolve(); }
       } catch {}
-      // Safety: resolve after 1.5x the reported duration
-      if (durationSec && elapsed > durationSec * 1.5) {
-        clearInterval(iv); resolve();
-      }
+      if (durationSec && elapsed > durationSec * 1.5) { clearInterval(iv); resolve(); }
     }, 2000);
   });
   return true;
@@ -74,66 +62,10 @@ async ({ uri, durationSec }) => {
 
 const spotifyStopJS = `
 async () => {
-  const r = await fetch('/get_access_token');
-  const { accessToken } = await r.json();
+  const { accessToken } = await (await fetch('/get_access_token')).json();
   await fetch('https://api.spotify.com/v1/me/player/pause', {
-    method: 'PUT',
-    headers: { Authorization: 'Bearer ' + accessToken },
+    method: 'PUT', headers: { Authorization: 'Bearer ' + accessToken },
   });
   return true;
 }
 `
-
-// Spotify streams Spotify via open.spotify.com.
-type Spotify struct {
-	*Session
-}
-
-// NewSpotify creates an unstarted Spotify provider.
-func NewSpotify(sampleRate int) *Spotify {
-	return &Spotify{NewSession("https://open.spotify.com", "spotify-profile", sampleRate)}
-}
-
-type browserSearchResult struct {
-	ID       string `json:"id"`
-	Title    string `json:"title"`
-	Artist   string `json:"artist"`
-	Album    string `json:"album"`
-	Duration int    `json:"duration"`
-}
-
-// Search implements BrowserMusic.
-func (s *Spotify) Search(ctx context.Context, query string, limit int) ([]music.MusicTrack, error) {
-	if limit <= 0 {
-		limit = 20
-	}
-	var results []browserSearchResult
-	if err := s.Evaluate(ctx, spotifySearchJS, &results, map[string]any{"query": query, "limit": limit}); err != nil {
-		return nil, err
-	}
-	tracks := make([]music.MusicTrack, 0, len(results))
-	for _, r := range results {
-		tracks = append(tracks, music.MusicTrack{
-			Title: r.Title, Artist: r.Artist, Album: r.Album,
-			DurationSeconds: r.Duration, SongID: r.ID, Service: "spotify",
-		})
-	}
-	return tracks, nil
-}
-
-// StreamTrack implements BrowserMusic.
-func (s *Spotify) StreamTrack(ctx context.Context, track music.MusicTrack, output device.Output) error {
-	return s.Session.StreamTrack(ctx, output, func(ctx context.Context) error {
-		return s.Evaluate(ctx, spotifyPlayJS, nil, map[string]any{
-			"uri": "spotify:track:" + track.SongID, "durationSec": track.DurationSeconds,
-		})
-	})
-}
-
-// StopPlayback implements BrowserMusic.
-func (s *Spotify) StopPlayback(ctx context.Context) error {
-	if s.pageCtx == nil {
-		return nil
-	}
-	return s.Evaluate(ctx, spotifyStopJS, nil)
-}

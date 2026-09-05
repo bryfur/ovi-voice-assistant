@@ -11,41 +11,37 @@ import (
 	"github.com/bryfur/ovi-voice-assistant/internal/config"
 )
 
-func configFor(provider string) config.STTConfig {
-	c := config.Default().STT
-	c.Provider = provider
-	return c
-}
-
-// float32ToBytes clips [-1, 1] samples to little-endian 16-bit PCM.
-func float32ToBytes(f []float32) []byte {
-	out := make([]byte, len(f)*2)
-	for i, v := range f {
-		x := max(-32768, min(32767, v*32767))
-		binary.LittleEndian.PutUint16(out[i*2:], uint16(int16(x)))
+// voice returns seconds of a synthetic voiced signal as 20 ms PCM chunks.
+func voice(seconds float64) [][]byte {
+	var out [][]byte
+	n := 0
+	for range int(seconds * SampleRate / 320) {
+		chunk := make([]byte, 640)
+		for i := range 320 {
+			t := float64(n) / SampleRate
+			f0 := 140 + 10*math.Sin(2*math.Pi*3*t)
+			var v float64
+			for h := 1; h <= 8; h++ {
+				v += math.Sin(2*math.Pi*f0*float64(h)*t) / float64(h)
+			}
+			v *= 0.3 * (0.5 + 0.5*math.Sin(2*math.Pi*4*t))
+			binary.LittleEndian.PutUint16(chunk[2*i:], uint16(int16(v*32767)))
+			n++
+		}
+		out = append(out, chunk)
 	}
 	return out
 }
 
-// voice returns n seconds of a synthetic voiced signal as PCM chunks.
-func voice(seconds float64) [][]byte {
-	var chunks [][]byte
-	n := 0
-	for len(chunks) < int(seconds*SampleRate/320) {
-		s := make([]float32, 320)
-		for i := range s {
-			tt := float64(n) / SampleRate
-			f0 := 140 + 10*math.Sin(2*math.Pi*3*tt)
-			var v float64
-			for h := 1; h <= 8; h++ {
-				v += math.Sin(2*math.Pi*f0*float64(h)*tt) / float64(h)
-			}
-			s[i] = float32(0.3 * (0.5 + 0.5*math.Sin(2*math.Pi*4*tt)) * v)
-			n++
-		}
-		chunks = append(chunks, float32ToBytes(s))
+func micWith(chunks [][]byte, silence int) chan []byte {
+	mic := make(chan []byte, len(chunks)+silence)
+	for _, c := range chunks {
+		mic <- c
 	}
-	return chunks
+	for range silence {
+		mic <- make([]byte, 640)
+	}
+	return mic
 }
 
 // Real Silero VAD through sherpa-onnx (downloads <1 MB); OVI_TEST_MODELS=1.
@@ -53,21 +49,14 @@ func TestSileroRealEndOfSpeech(t *testing.T) {
 	if os.Getenv("OVI_TEST_MODELS") != "1" {
 		t.Skip("set OVI_TEST_MODELS=1")
 	}
-	v, err := newSileroVAD(0.5)
+	v, err := newSilero(0.5)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer v.Close()
-	mic := make(chan []byte, 1000)
-	for _, c := range voice(1.5) {
-		mic <- c
-	}
-	for range 60 { // 1.2 s of silence
-		mic <- make([]byte, 640)
-	}
 	speech := 0
 
-	seg, err := listen(context.Background(), mic, v, func() { speech++ }, nil)
+	seg, err := listen(context.Background(), micWith(voice(1.5), 60), v, func() { speech++ }, nil)
 
 	t.Logf("segment=%.2fs speech events=%d", float64(len(seg))/SampleRate, speech)
 	if err != nil || speech != 1 || len(seg) < SampleRate/2 {
@@ -80,26 +69,16 @@ func TestNemotronRealLoadAndListen(t *testing.T) {
 	if os.Getenv("OVI_TEST_NEMOTRON") != "1" {
 		t.Skip("set OVI_TEST_NEMOTRON=1")
 	}
-	s, err := New(configFor("nemotron"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	s, _ := New(config.Default().STT)
 	start := time.Now()
 	if err := s.Load(); err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
 	t.Logf("loaded in %v", time.Since(start))
-	mic := make(chan []byte, 1000)
-	for _, c := range voice(1.5) {
-		mic <- c
-	}
-	for range 60 {
-		mic <- make([]byte, 640)
-	}
 
 	start = time.Now()
-	text, err := s.Listen(context.Background(), mic, nil)
+	text, err := s.Listen(context.Background(), micWith(voice(1.5), 60), nil)
 
 	t.Logf("transcript=%q in %v", text, time.Since(start))
 	if err != nil {

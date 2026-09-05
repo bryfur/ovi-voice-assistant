@@ -10,22 +10,19 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 )
 
-// Handler executes a tool with decoded JSON arguments.
-type Handler func(ctx context.Context, actx *Context, args Args) (string, error)
-
 // Tool is a function the model can call.
 type Tool struct {
 	Name        string
 	Description string
-	Parameters  map[string]any // JSON schema; nil = no parameters
-	Handler     Handler
+	Parameters  map[string]any // JSON schema; nil means none
+	Run         func(ctx context.Context, env *Env, args Args) (string, error)
 }
 
-// Def converts the tool into an OpenAI function definition.
+// Def is the tool as the API sees it.
 func (t Tool) Def() openai.ChatCompletionToolUnionParam {
 	params := t.Parameters
 	if params == nil {
-		params = map[string]any{"type": "object", "properties": map[string]any{}}
+		params = schema(nil, map[string]any{})
 	}
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        t.Name,
@@ -34,28 +31,40 @@ func (t Tool) Def() openai.ChatCompletionToolUnionParam {
 	})
 }
 
-// Args holds decoded tool-call arguments.
+// schema builds an object schema from its properties.
+func schema(required []string, props map[string]any) map[string]any {
+	s := map[string]any{"type": "object", "properties": props}
+	if len(required) > 0 {
+		s["required"] = required
+	}
+	return s
+}
+
+func prop(typ, desc string) map[string]any {
+	return map[string]any{"type": typ, "description": desc}
+}
+
+// Args are a tool call's decoded arguments.
 type Args map[string]any
 
-// parseArgs decodes a JSON argument object; empty input yields no args.
 func parseArgs(raw string) (Args, error) {
 	if strings.TrimSpace(raw) == "" {
 		return Args{}, nil
 	}
-	var m map[string]any
-	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+	var a Args
+	if err := json.Unmarshal([]byte(raw), &a); err != nil {
 		return nil, fmt.Errorf("invalid tool arguments: %w", err)
 	}
-	return m, nil
+	return a, nil
 }
 
-// String returns a string argument, or def when missing.
+// String returns the argument as text, or def when missing.
 func (a Args) String(key, def string) string {
 	switch v := a[key].(type) {
-	case string:
-		return v
 	case nil:
 		return def
+	case string:
+		return v
 	default:
 		return fmt.Sprint(v)
 	}
@@ -70,9 +79,7 @@ func (a Args) Float(key string, def float64) float64 {
 }
 
 // Int returns an integer argument, or def when missing.
-func (a Args) Int(key string, def int) int {
-	return int(a.Float(key, float64(def)))
-}
+func (a Args) Int(key string, def int) int { return int(a.Float(key, float64(def))) }
 
 // Bool returns a boolean argument, or def when missing.
 func (a Args) Bool(key string, def bool) bool {
@@ -80,16 +87,4 @@ func (a Args) Bool(key string, def bool) bool {
 		return v
 	}
 	return def
-}
-
-func schema(required []string, props map[string]any) map[string]any {
-	s := map[string]any{"type": "object", "properties": props}
-	if len(required) > 0 {
-		s["required"] = required
-	}
-	return s
-}
-
-func prop(typ, desc string) map[string]any {
-	return map[string]any{"type": typ, "description": desc}
 }

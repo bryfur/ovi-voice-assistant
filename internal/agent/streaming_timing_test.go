@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -31,7 +30,7 @@ func TestTokensArriveIncrementally(t *testing.T) {
 	start := time.Now()
 	var first, last time.Duration
 
-	a.RunStreamed(context.Background(), "hi", nil, func(string) {
+	a.Run(ctx, "hi", nil, func(string) {
 		if first == 0 {
 			first = time.Since(start)
 		}

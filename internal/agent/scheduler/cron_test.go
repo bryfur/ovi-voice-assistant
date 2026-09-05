@@ -18,6 +18,7 @@ func TestMatchesField(t *testing.T) {
 		{"10/5", 10, true}, {"10/5", 25, true}, {"10/5", 5, false},
 		{"1,3,5", 3, true}, {"1,3,5", 4, false},
 		{"1-3,10,*/20", 40, true}, {"1-3,10,*/20", 11, false},
+		{"x", 1, false}, {"*/0", 1, false},
 	}
 
 	for _, c := range cases {
@@ -37,25 +38,16 @@ func TestCronMatches(t *testing.T) {
 	mon := at(2025, time.January, 6, 7, 0) // Monday
 	sun := at(2025, time.January, 5, 7, 0) // Sunday
 
-	if !cronMatches("* * * * *", mon) {
-		t.Error("every minute should match")
+	if !cronMatches("* * * * *", mon) || !cronMatches("0 7 * * *", mon) || cronMatches("0 7 * * *", at(2025, time.January, 6, 7, 1)) {
+		t.Error("minute/hour")
 	}
-	if !cronMatches("0 7 * * *", mon) || cronMatches("0 7 * * *", at(2025, time.January, 6, 7, 1)) {
-		t.Error("specific time")
+	if !cronMatches("0 7 * * 1-5", mon) || cronMatches("0 7 * * 1-5", sun) || !cronMatches("0 7 * * 0", sun) {
+		t.Error("weekday")
 	}
-	if !cronMatches("0 7 * * 1-5", mon) || cronMatches("0 7 * * 1-5", sun) {
-		t.Error("weekday range")
-	}
-	if !cronMatches("0 7 * * 0", sun) {
-		t.Error("sunday = 0")
-	}
-	if !cronMatches("*/30 * * * *", at(2025, time.January, 6, 7, 30)) {
-		t.Error("every 30 minutes")
-	}
-	if !cronMatches("0 7 * 1 *", mon) || cronMatches("0 7 * 2 *", mon) {
-		t.Error("month filter")
+	if !cronMatches("*/30 * * * *", at(2025, time.January, 6, 7, 30)) || !cronMatches("0 7 * 1 *", mon) || cronMatches("0 7 * 2 *", mon) {
+		t.Error("step/month")
 	}
 	if cronMatches("0 7 * *", mon) {
-		t.Error("invalid expression should not match")
+		t.Error("four fields must not match")
 	}
 }

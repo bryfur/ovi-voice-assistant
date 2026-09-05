@@ -20,9 +20,9 @@ ESPHome Device (speaker)   ◄── encoded audio ◄────────�
 
 - **STT**: [Nemotron Speech 600M](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b) streaming (default) or Whisper, both local via [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx). Silero VAD decides when you stopped talking.
 - **Agent**: the official OpenAI Go SDK against any OpenAI-compatible endpoint (OpenAI, ollama, vLLM, LM Studio, …). Supports MCP tools and sub-agents.
-- **TTS**: [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) 82M int8 (default) or [Piper](https://github.com/rhasspy/piper) voices, local via sherpa-onnx.
+- **TTS**: [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) 82M (default) or [Piper](https://github.com/rhasspy/piper) voices, local via sherpa-onnx.
 - **Transport**: WiFi (plain TCP) or BLE (GATT). Audio codecs: PCM, LC3, Opus.
-- **Music**: YouTube Music, plus Spotify and Apple Music through a browser window. Plays at 48 kHz stereo (LC3 at 64 kbps per channel, Opus at 128 kbps) while voice stays at 24 kHz mono. Multi-room synchronized playback.
+- **Music**: YouTube Music, plus Spotify and Apple Music through a browser window. Plays at 48 kHz stereo (LC3 at 64 kbps per channel, Opus at 128 kbps) while voice stays at 24 kHz mono. Multi-room synchronized playback; music pauses for a wake word and resumes when the answer is done.
 - **Automations**: Cron-based proactive announcements.
 
 ## Supported devices
@@ -139,7 +139,7 @@ Later sources override earlier ones:
 ovi --gen-key
 ```
 
-writes a key to `esphome/secrets.yaml`. Uncomment the `api.encryption` block in the device YAML, reflash, and connect with `ovi voice-pe-XXXX.local::KEY`.
+writes an `api_encryption_key` to `esphome/secrets.yaml`. The device YAMLs use it for ESPHome's native API (the ESPHome dashboard and OTA tooling). Ovi's own link on port 6055 is not encrypted yet; a key given as `host:port:KEY` is accepted and ignored.
 
 ## Agent tools
 
@@ -174,7 +174,7 @@ OVI_TEST_NEMOTRON=1 go test ./internal/speech/stt/ -run Nemotron # real Nemotron
 cmd/ovi/              CLI flags and the serving loop
 internal/
     config/           Layered settings
-    device/           Wire events, WiFi + BLE transports, paced encoded output
+    device/           Wire events, WiFi + BLE transports, the paced encoding speaker
         codec/        PCM, LC3 (cgo liblc3), Opus (cgo libopus)
     speech/
         models/       sherpa-onnx model pack downloads
@@ -183,9 +183,9 @@ internal/
     agent/            OpenAI SDK tool-calling loop, built-in tools, sub-agents
         mcp/          MCP stdio client
         scheduler/    Cron automations
-    music/            Player, multi-room sync, YouTube (yt-dlp)
+    music/            Multi-room player, YouTube service (yt-dlp + ffmpeg)
         browser/      Spotify / Apple Music via Chromium tab capture
-    pipeline/         STT → Agent → TTS per utterance, speech queue, device connection, wake arbitration
+    pipeline/         STT → Agent → TTS per utterance, per-device connection, wake arbitration
     cli/              Prompts, mDNS discovery, config-file editing, ESPHome flashing, setup wizard
 esphome/              Device firmware: custom components and per-device YAMLs
 ```

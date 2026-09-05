@@ -6,68 +6,53 @@ import (
 	"time"
 )
 
-// matchesField checks if a single cron field matches a value.
-func matchesField(expr string, value int) bool {
-	if expr == "*" {
-		return true
+// cronMatches reports whether a five-field cron expression (minute hour
+// day-of-month month day-of-week, Sunday = 0) matches t.
+func cronMatches(expr string, t time.Time) bool {
+	fields := strings.Fields(expr)
+	if len(fields) != 5 {
+		return false
 	}
-	for _, part := range strings.Split(expr, ",") {
-		if strings.Contains(part, "/") {
-			base, stepS, _ := strings.Cut(part, "/")
-			step, err := strconv.Atoi(stepS)
-			if err != nil || step <= 0 {
+	values := [5]int{t.Minute(), t.Hour(), t.Day(), int(t.Month()), int(t.Weekday())}
+	for i, v := range values {
+		if !matchesField(fields[i], v) {
+			return false
+		}
+	}
+	return true
+}
+
+// matchesField handles *, n, a-b, */s, a/s and comma-separated lists of those.
+func matchesField(expr string, v int) bool {
+	for part := range strings.SplitSeq(expr, ",") {
+		if part == "*" {
+			return true
+		}
+		if base, step, ok := strings.Cut(part, "/"); ok {
+			start, s := 0, 0
+			var err error
+			if s, err = strconv.Atoi(step); err != nil || s <= 0 {
 				continue
 			}
-			start := 0
 			if base != "*" {
-				start, err = strconv.Atoi(base)
-				if err != nil {
+				if start, err = strconv.Atoi(base); err != nil {
 					continue
 				}
 			}
-			if value-start >= 0 && (value-start)%step == 0 {
+			if v >= start && (v-start)%s == 0 {
 				return true
 			}
-		} else if strings.Contains(part, "-") {
-			loS, hiS, _ := strings.Cut(part, "-")
-			lo, err1 := strconv.Atoi(loS)
-			hi, err2 := strconv.Atoi(hiS)
-			if err1 != nil || err2 != nil {
-				continue
-			}
-			if lo <= value && value <= hi {
-				return true
-			}
-		} else {
-			n, err := strconv.Atoi(part)
-			if err != nil {
-				continue
-			}
-			if n == value {
-				return true
-			}
+			continue
+		}
+		lo, hi, ok := strings.Cut(part, "-")
+		if !ok {
+			hi = lo
+		}
+		a, err1 := strconv.Atoi(lo)
+		b, err2 := strconv.Atoi(hi)
+		if err1 == nil && err2 == nil && a <= v && v <= b {
+			return true
 		}
 	}
 	return false
-}
-
-// cronMatches checks if a 5-field cron expression matches a time.
-//
-// Fields: minute hour day-of-month month day-of-week
-// Day-of-week: 0 = Sunday, 6 = Saturday (standard cron convention).
-func cronMatches(expr string, t time.Time) bool {
-	parts := strings.Fields(expr)
-	if len(parts) != 5 {
-		return false
-	}
-	return matchesField(parts[0], t.Minute()) &&
-		matchesField(parts[1], t.Hour()) &&
-		matchesField(parts[2], t.Day()) &&
-		matchesField(parts[3], int(t.Month())) &&
-		matchesField(parts[4], int(t.Weekday()))
-}
-
-// validateCron checks that an expression has 5 fields.
-func validateCron(expr string) bool {
-	return len(strings.Fields(expr)) == 5
 }

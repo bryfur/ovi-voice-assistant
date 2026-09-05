@@ -9,12 +9,9 @@ func TestParseArgs(t *testing.T) {
 		t.Fatalf("got %v, %v", args, err)
 	}
 	if args.String("a", "") != "1" || args.Float("missing", 2.5) != 2.5 || args.String("missing", "d") != "d" || !args.Bool("missing", true) {
-		t.Fatal("defaults/coercions wrong")
+		t.Fatal("defaults and coercions wrong")
 	}
-}
-
-func TestParseArgsEmptyAndInvalid(t *testing.T) {
-	if empty, err := parseArgs(""); err != nil || len(empty) != 0 {
+	if empty, err := parseArgs(" "); err != nil || len(empty) != 0 {
 		t.Fatalf("empty: %v, %v", empty, err)
 	}
 	if _, err := parseArgs("{bad"); err == nil {
@@ -22,7 +19,7 @@ func TestParseArgsEmptyAndInvalid(t *testing.T) {
 	}
 }
 
-func TestToolDef(t *testing.T) {
+func TestToolDefDefaultsParameters(t *testing.T) {
 	def := Tool{Name: "x", Description: "d"}.Def()
 
 	if def.OfFunction == nil || def.OfFunction.Function.Name != "x" || def.OfFunction.Function.Parameters["type"] != "object" {

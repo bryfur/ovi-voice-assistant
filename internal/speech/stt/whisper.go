@@ -2,7 +2,6 @@ package stt
 
 import (
 	"context"
-	"github.com/bryfur/ovi-voice-assistant/internal/speech/models"
 	"log/slog"
 	"strings"
 	"sync"
@@ -10,20 +9,19 @@ import (
 	sherpa "github.com/k2-fsa/sherpa-onnx-go/sherpa_onnx"
 
 	"github.com/bryfur/ovi-voice-assistant/internal/config"
+	"github.com/bryfur/ovi-voice-assistant/internal/speech/models"
 )
 
 const whisperDefault = "base.en"
 
 // whisper runs OpenAI Whisper offline: the VAD collects one utterance,
-// then the whole segment is decoded.
+// then the whole of it is decoded.
 type whisper struct {
 	cfg config.STTConfig
 	mu  sync.Mutex
-	vad *sileroVAD
+	vad *silero
 	rec *sherpa.OfflineRecognizer
 }
-
-func newWhisper(cfg config.STTConfig) *whisper { return &whisper{cfg: cfg} }
 
 func (w *whisper) Load() error {
 	name := w.cfg.Model
@@ -34,17 +32,18 @@ func (w *whisper) Load() error {
 	if err != nil {
 		return err
 	}
-	enc, err := models.Find(dir, "*-encoder.int8.onnx", "*-encoder.onnx")
-	if err != nil {
-		return err
-	}
-	dec, err := models.Find(dir, "*-decoder.int8.onnx", "*-decoder.onnx")
-	if err != nil {
-		return err
-	}
-	tokens, err := models.Find(dir, "*-tokens.txt", "tokens.txt")
-	if err != nil {
-		return err
+	var enc, dec, tokens string
+	for _, f := range []struct {
+		dst   *string
+		globs []string
+	}{
+		{&enc, []string{"*-encoder.int8.onnx", "*-encoder.onnx"}},
+		{&dec, []string{"*-decoder.int8.onnx", "*-decoder.onnx"}},
+		{&tokens, []string{"*-tokens.txt", "tokens.txt"}},
+	} {
+		if *f.dst, err = models.Find(dir, f.globs...); err != nil {
+			return err
+		}
 	}
 	lang := w.cfg.Language
 	if strings.HasSuffix(name, ".en") {
@@ -52,16 +51,12 @@ func (w *whisper) Load() error {
 	}
 	rc := sherpa.OfflineRecognizerConfig{DecodingMethod: "greedy_search"}
 	rc.FeatConfig = sherpa.FeatureConfig{SampleRate: SampleRate, FeatureDim: 80}
-	rc.ModelConfig = sherpa.OfflineModelConfig{
-		Tokens: tokens, NumThreads: threads(), Provider: "cpu", ModelType: "whisper",
-	}
-	rc.ModelConfig.Whisper = sherpa.OfflineWhisperModelConfig{
-		Encoder: enc, Decoder: dec, Language: lang, Task: "transcribe", TailPaddings: -1,
-	}
+	rc.ModelConfig = sherpa.OfflineModelConfig{Tokens: tokens, NumThreads: threads(), Provider: "cpu", ModelType: "whisper"}
+	rc.ModelConfig.Whisper = sherpa.OfflineWhisperModelConfig{Encoder: enc, Decoder: dec, Language: lang, Task: "transcribe", TailPaddings: -1}
 	if w.rec = sherpa.NewOfflineRecognizer(&rc); w.rec == nil {
 		return errLoad("Whisper " + name)
 	}
-	if w.vad, err = newSileroVAD(w.cfg.Silence); err != nil {
+	if w.vad, err = newSilero(w.cfg.Silence); err != nil {
 		return err
 	}
 	slog.Info("Whisper STT ready", "model", name)

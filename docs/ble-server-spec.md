@@ -1,6 +1,6 @@
 # Ovi BLE Voice Assistant Server Specification
 
-This document specifies the BLE GATT protocol used between an Ovi ESPHome device (GATT server/peripheral) and an Ovi voice assistant server (GATT client/central). It contains everything needed to implement a compatible server in any language. Code snippets below are language-neutral pseudocode (Python-flavoured); the reference server implementation is Go — see `internal/device/ble_transport.go` and `internal/device/encoding_output.go`.
+This document specifies the BLE GATT protocol used between an Ovi ESPHome device (GATT server/peripheral) and an Ovi voice assistant server (GATT client/central). It contains everything needed to implement a compatible server in any language. Code snippets below are language-neutral pseudocode (Python-flavoured); the reference server implementation is Go — see `internal/device/ble.go` and `internal/device/speaker.go`.
 
 ---
 
@@ -155,7 +155,7 @@ No payload. Tells the device to stop streaming mic audio. The device transitions
 
 No payload. Signals that speaker audio frames will follow.
 
-**Important**: Before sending TTS_START, the server should send an `AUDIO_CONFIG` event with the speaker codec parameters (sample rate, nbyte, codec, channels). The device uses this to configure its audio decoder. The `_EncodingOutput` class does this automatically.
+**Important**: Before sending TTS_START, the server should send an `AUDIO_CONFIG` event with the speaker codec parameters (sample rate, nbyte, codec, channels). The device uses this to configure its audio decoder. The Go `device.Speaker` does this automatically.
 
 #### TTS_END (0x05) — Server → Device
 

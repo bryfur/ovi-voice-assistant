@@ -71,7 +71,7 @@ func (f *fakeOpenAI) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	tn := f.turns[i]
 	w.Header().Set("Content-Type", "text/event-stream")
-	chunk := func(delta string, finish string) {
+	chunk := func(delta, finish string) {
 		fmt.Fprintf(w, `data: {"id":"c","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":%s,"finish_reason":%s}]}`+"\n\n", delta, finish)
 	}
 	for _, word := range strings.SplitAfter(tn.text, " ") {

@@ -1,15 +1,17 @@
 package cli
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"net"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/grandcat/zeroconf"
 )
 
-// esphomeService is the mDNS service advertised by ESPHome devices.
+// esphomeService is the mDNS service ESPHome devices advertise.
 const esphomeService = "_esphomelib._tcp"
 
 // Device is a discovered ESPHome device.
@@ -20,7 +22,7 @@ type Device struct {
 	Port int
 }
 
-// mdnsBrowse is the mDNS browse implementation; tests may replace it.
+// mdnsBrowse browses for ESPHome devices; tests replace it.
 var mdnsBrowse = func(ctx context.Context, entries chan<- *zeroconf.ServiceEntry) error {
 	resolver, err := zeroconf.NewResolver(nil)
 	if err != nil {
@@ -29,7 +31,7 @@ var mdnsBrowse = func(ctx context.Context, entries chan<- *zeroconf.ServiceEntry
 	return resolver.Browse(ctx, esphomeService, "local.", entries)
 }
 
-// DiscoverDevices scans the local network for ESPHome devices for timeout.
+// DiscoverDevices scans the local network for ESPHome devices.
 func DiscoverDevices(timeout time.Duration) ([]Device, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -39,35 +41,33 @@ func DiscoverDevices(timeout time.Duration) ([]Device, error) {
 	}
 	seen := map[string]bool{}
 	var devices []Device
+scan:
 	for {
 		select {
 		case <-ctx.Done():
-			sort.Slice(devices, func(i, j int) bool { return devices[i].Name < devices[j].Name })
-			return devices, nil
+			break scan
 		case e, ok := <-entries:
 			if !ok {
-				sort.Slice(devices, func(i, j int) bool { return devices[i].Name < devices[j].Name })
-				return devices, nil
+				break scan
 			}
-			if e == nil || seen[e.Instance] {
-				continue
-			}
-			ip := ""
-			if len(e.AddrIPv4) > 0 {
-				ip = e.AddrIPv4[0].String()
-			} else if len(e.AddrIPv6) > 0 {
-				ip = e.AddrIPv6[0].String()
-			}
-			if ip == "" {
+			ip := firstIP(e.AddrIPv4, e.AddrIPv6)
+			if e == nil || ip == "" || seen[e.Instance] {
 				continue
 			}
 			seen[e.Instance] = true
-			port := e.Port
-			if port == 0 {
-				port = 6055
-			}
 			name := strings.TrimSuffix(e.Instance, "."+esphomeService+".local.")
-			devices = append(devices, Device{Name: name, Host: name + ".local", IP: ip, Port: port})
+			devices = append(devices, Device{Name: name, Host: name + ".local", IP: ip, Port: cmp.Or(e.Port, 6055)})
 		}
 	}
+	slices.SortFunc(devices, func(a, b Device) int { return strings.Compare(a.Name, b.Name) })
+	return devices, nil
+}
+
+func firstIP(lists ...[]net.IP) string {
+	for _, ips := range lists {
+		if len(ips) > 0 {
+			return ips[0].String()
+		}
+	}
+	return ""
 }
