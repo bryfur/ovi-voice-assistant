@@ -18,7 +18,7 @@ import (
 const (
 	LC3FrameDurationUs = 10_000
 	LC3DefaultNByte    = 40 // 32 kbps per channel: voice
-	LC3MusicNByte      = 60 // 48 kbps per channel: music, 48 kHz stereo
+	LC3MusicNByte      = 80 // 64 kbps per channel: music, 48 kHz stereo
 )
 
 // LC3Codec is the LC3 audio codec (10ms frames).

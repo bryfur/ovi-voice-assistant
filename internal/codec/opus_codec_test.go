@@ -36,7 +36,7 @@ func TestOpusEncodeProducesBytes(t *testing.T) {
 func TestOpusMusicModeSetsBitrate(t *testing.T) {
 	c, err := NewOpusCodec(48000, 2, LC3MusicNByte)
 
-	if err != nil || c.Bitrate() != 96000 || c.EncodedFrameBytes() != 120 {
+	if err != nil || c.Bitrate() != 128000 || c.EncodedFrameBytes() != 160 {
 		t.Fatalf("err=%v bitrate=%d frameBytes=%d", err, c.Bitrate(), c.EncodedFrameBytes())
 	}
 	enc, _ := c.Encode(make([]byte, c.PCMFrameBytes()))

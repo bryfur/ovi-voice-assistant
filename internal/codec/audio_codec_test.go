@@ -83,13 +83,13 @@ func TestCreateOpusSnapsRate(t *testing.T) {
 
 func TestCreateMusicSettings(t *testing.T) {
 	lc3, err := Create(LC3, 48000, 2, LC3MusicNByte)
-	if err != nil || lc3.EncodedFrameBytes() != 60 || lc3.Channels() != 2 {
+	if err != nil || lc3.EncodedFrameBytes() != 80 || lc3.Channels() != 2 {
 		t.Fatalf("lc3 music: %+v, %v", lc3, err)
 	}
 
 	op, err := Create(Opus, 48000, 2, LC3MusicNByte)
 
-	if err != nil || op.(*OpusCodec).Bitrate() != 96000 {
+	if err != nil || op.(*OpusCodec).Bitrate() != 128000 {
 		t.Fatalf("opus music: %v, %v", op, err)
 	}
 }
@@ -98,7 +98,7 @@ func TestDescribe(t *testing.T) {
 	lc3, _ := Create(LC3, 48000, 2, LC3MusicNByte)
 	op, _ := Create(Opus, 24000, 1, 0)
 
-	if got := Describe(lc3); got != "lc3 48000Hz 2ch 10ms 60B/ch 48kbps/ch" {
+	if got := Describe(lc3); got != "lc3 48000Hz 2ch 10ms 80B/ch 64kbps/ch" {
 		t.Fatalf("lc3: %q", got)
 	}
 	if got := Describe(NewPCMCodec(24000, 1)); got != "pcm 24000Hz 1ch 16-bit 20ms" {
