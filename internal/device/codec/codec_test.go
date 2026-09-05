@@ -119,10 +119,22 @@ func TestRoundTrips(t *testing.T) {
 }
 
 func TestOpusMusicModeBitrate(t *testing.T) {
-	c := mustNew(t, "opus", 48000, 2, MusicNByte).(*opusCodec)
+	music := mustNew(t, "opus", 48000, 2, MusicNByte).(*opusCodec)
+	voice := mustNew(t, "opus", 24000, 1, 0).(*opusCodec)
 
-	if c.Bitrate() != 128000 || c.Format().FrameBytes != 160 {
-		t.Fatalf("bitrate=%d frameBytes=%d", c.Bitrate(), c.Format().FrameBytes)
+	if music.bitrate != 128000 || music.Format().FrameBytes != 160 || music.Format().Kbps() != 64 || voice.bitrate != 0 {
+		t.Fatalf("music=%+v voice=%+v", music.Format(), voice.Format())
+	}
+}
+
+func TestLC3SampleRoundingMatchesLiblc3(t *testing.T) {
+	if sample(0) != 0 || sample(1) != 32767 || sample(-1) != -32768 || sample(0.5) != 16384 || sample(-1.5/32768) != -2 {
+		t.Fatal("rounding or clipping wrong")
+	}
+	c := mustNew(t, "lc3", 16000, 1, 0)
+	silence, _ := c.Encode(make([]byte, c.Format().PCMBytes()))
+	if empty, err := c.Decode(nil); err != nil || len(empty) != c.Format().PCMBytes() || len(silence) != 40 {
+		t.Fatalf("empty frame: %d bytes, %v; silence packet %d bytes", len(empty), err, len(silence))
 	}
 }
 

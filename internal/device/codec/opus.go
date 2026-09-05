@@ -5,52 +5,44 @@ import (
 	"fmt"
 	"sync"
 
-	"gopkg.in/hraban/opus.v2"
+	"github.com/tphakala/go-opus/opus"
 )
 
 const (
 	opusFrameMs   = 20
-	opusVoiceMax  = 80   // typical ceiling of a 20 ms VoIP packet, informational
-	opusPacketMax = 4000 // encode buffer
+	opusVoiceMax  = 80   // typical ceiling of a 20 ms voice packet, informational
+	opusPacketMax = 1276 // holds any single-frame packet
 )
 
-// opusCodec wraps libopus with 20 ms frames. nbyte = 0 is VoIP mode at the
-// library default bitrate; otherwise audio mode at nbyte × 800 bps per channel.
+// opusCodec is a pure Go Opus codec with 20 ms frames. nbyte = 0 leaves the
+// bitrate to the encoder; otherwise it targets nbyte × 800 bps per channel.
 type opusCodec struct {
-	f   Format
-	mu  sync.Mutex
-	enc *opus.Encoder
-	dec *opus.Decoder
+	f       Format
+	bitrate int
+	mu      sync.Mutex
+	enc     *opus.Encoder
+	dec     *opus.Decoder
 }
 
 func newOpus(rate, channels, nbyte int) (*opusCodec, error) {
-	app, frameBytes := opus.AppVoIP, opusVoiceMax
+	cfg := opus.EncoderConfig{SampleRate: rate, Channels: channels, ConstrainedVBR: true}
+	frameBytes := opusVoiceMax
 	if nbyte > 0 {
-		app, frameBytes = opus.AppAudio, nbyte*opusFrameMs/10
+		cfg.Bitrate, frameBytes = nbyte*800*channels, nbyte*opusFrameMs/10
 	}
-	enc, err := opus.NewEncoder(rate, channels, app)
+	enc, err := opus.NewEncoder(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("opus: %w", err)
-	}
-	if nbyte > 0 {
-		if err := enc.SetBitrate(nbyte * 800 * channels); err != nil {
-			return nil, fmt.Errorf("opus: %w", err)
-		}
 	}
 	dec, err := opus.NewDecoder(rate, channels)
 	if err != nil {
 		return nil, fmt.Errorf("opus: %w", err)
 	}
-	return &opusCodec{f: Format{Type: Opus, Rate: rate, Channels: channels, FrameMs: opusFrameMs, FrameBytes: frameBytes}, enc: enc, dec: dec}, nil
+	f := Format{Type: Opus, Rate: rate, Channels: channels, FrameMs: opusFrameMs, FrameBytes: frameBytes}
+	return &opusCodec{f: f, bitrate: cfg.Bitrate, enc: enc, dec: dec}, nil
 }
 
 func (c *opusCodec) Format() Format { return c.f }
-
-// Bitrate is the encoder's configured bitrate in bps.
-func (c *opusCodec) Bitrate() int {
-	b, _ := c.enc.Bitrate()
-	return b
-}
 
 func (c *opusCodec) Encode(pcm []byte) ([]byte, error) {
 	need := c.f.PCMBytes()
@@ -59,7 +51,7 @@ func (c *opusCodec) Encode(pcm []byte) ([]byte, error) {
 	}
 	samples := make([]int16, need/2)
 	for i := range samples {
-		samples[i] = int16(binary.LittleEndian.Uint16(pcm[i*2:]))
+		samples[i] = int16(binary.LittleEndian.Uint16(pcm[2*i:]))
 	}
 	out := make([]byte, opusPacketMax)
 	c.mu.Lock()
@@ -71,6 +63,7 @@ func (c *opusCodec) Encode(pcm []byte) ([]byte, error) {
 	return out[:n], nil
 }
 
+// Decode expands a packet; an empty one is concealed as a lost frame.
 func (c *opusCodec) Decode(frame []byte) ([]byte, error) {
 	samples := make([]int16, c.f.PCMBytes()/2)
 	c.mu.Lock()
@@ -79,9 +72,9 @@ func (c *opusCodec) Decode(frame []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opus: %w", err)
 	}
-	pcm := make([]byte, n*c.f.Channels*2)
+	pcm := make([]byte, 2*n*c.f.Channels)
 	for i := range n * c.f.Channels {
-		binary.LittleEndian.PutUint16(pcm[i*2:], uint16(samples[i]))
+		binary.LittleEndian.PutUint16(pcm[2*i:], uint16(samples[i]))
 	}
 	return pcm, nil
 }

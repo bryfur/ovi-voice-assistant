@@ -37,14 +37,12 @@ ESPHome Device (speaker)   ◄── encoded audio ◄────────�
 
 ## Requirements
 
-- Go 1.24+ and a C compiler (cgo)
-- `liblc3`, `libopus`, `libopusfile` with `pkg-config` files
-  - Arch: `pacman -S liblc3 opus opusfile` · Debian/Ubuntu: `apt install liblc3-dev libopus-dev libopusfile-dev` · macOS: `brew install liblc3 opus opusfile`
+- Go 1.26+ and a C compiler (cgo); no audio libraries to install, LC3 is compiled in and Opus is pure Go
 - For music: `yt-dlp` and `ffmpeg` (YouTube Music); Chromium for Spotify / Apple Music
 - An ESPHome-compatible device (see above) and an OpenAI-compatible LLM endpoint
 - [ESPHome](https://esphome.io) only if you flash firmware with `ovi --flash`
 
-sherpa-onnx ships prebuilt as part of the Go module; speech models download into `~/.cache/ovi/models` on first use (Nemotron ~460 MB, Kokoro ~350 MB, Piper voices ~70 MB).
+sherpa-onnx ships prebuilt as part of the Go module (the only native library at run time); speech models download into `~/.cache/ovi/models` on first use (Nemotron ~460 MB, Kokoro ~350 MB, Piper voices ~70 MB).
 
 ## Quick start
 
@@ -175,7 +173,7 @@ cmd/ovi/              CLI flags and the serving loop
 internal/
     config/           Layered settings
     device/           Wire events, WiFi + BLE transports, the paced encoding speaker
-        codec/        PCM, LC3 (cgo liblc3), Opus (cgo libopus)
+        codec/        PCM, LC3 (liblc3 compiled in via cgo), Opus (pure Go)
     speech/
         models/       sherpa-onnx model pack downloads
         stt/          Silero VAD listen loop, Nemotron (streaming), Whisper (offline)

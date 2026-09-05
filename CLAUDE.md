@@ -8,7 +8,7 @@ Guiding principles: keep it simple, keep it short, keep it fast. Prefer deleting
 
 ESPHome device → server → device, all streaming. Seven top-level domains; the big ones have subpackages. Dependencies flow downward only.
 
-1. **device** — the wire: `Event` payloads, a `Transport` (WiFi TCP or BLE GATT) that delivers to a `Handler`, and `Speaker`, the `Output` that encodes PCM, paces it to real time and orders events behind playback. `device/codec` holds PCM/LC3/Opus (cgo) behind one `Format` value. Depends on nothing internal.
+1. **device** — the wire: `Event` payloads, a `Transport` (WiFi TCP or BLE GATT) that delivers to a `Handler`, and `Speaker`, the `Output` that encodes PCM, paces it to real time and orders events behind playback. `device/codec` holds PCM/LC3/Opus behind one `Format` value. Depends on nothing internal.
 2. **speech** — everything sherpa-onnx. `speech/models` downloads packs to `~/.cache/ovi/models`; `speech/stt` is the VAD-driven `listen` loop feeding Nemotron (online transducer, ~0 ms tail) or Whisper (offline); `speech/tts` is Kokoro (fp32 pack; int8 is 3× slower on x86) or Piper plus sentence streaming (the first chunk ends at a clause boundary so audio starts early). `stt.silence` is the main latency knob.
 3. **agent** — OpenAI SDK streaming loop with 19 built-in tools and sub-agents as tools; tools act on an `Env` (announce, music, scheduler, timers); `agent/mcp` is the stdio MCP client; `agent/scheduler` the cron automations. History is per wake session, in memory.
 4. **music** — one `Player` streams a queue of `Track`s to every device at once (SYNC_PLAY); each source is a `Service`: YouTube via `yt-dlp` + `ffmpeg` built in, `music/browser` adds Spotify / Apple Music through a captured Chromium tab, enabled with `music.services`. The pipeline calls `Interrupt` on a wake word and `Continue` when the session ends, so music ducks under speech and comes back.
@@ -24,7 +24,7 @@ ESPHome device → server → device, all streaming. Seven top-level domains; th
 
 ## Build, test, lint
 
-Native deps: `liblc3`, `libopus`, `libopusfile` (pkg-config). sherpa-onnx is prebuilt inside the Go module.
+Native code: sherpa-onnx (prebuilt shared libraries inside its Go module) and liblc3 (C sources bundled in `github.com/caitunai/lc3`, compiled by cgo). Opus is pure Go (`github.com/tphakala/go-opus`). No system audio libraries.
 
 ```bash
 go build ./... && go vet ./... && gofmt -l internal cmd   # must be clean

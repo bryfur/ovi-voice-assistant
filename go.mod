@@ -3,6 +3,7 @@ module github.com/bryfur/ovi-voice-assistant
 go 1.26
 
 require (
+	github.com/caitunai/lc3 v1.0.0
 	github.com/chromedp/cdproto v0.0.0-20260714215040-dc233986426f
 	github.com/chromedp/chromedp v0.16.0
 	github.com/coder/websocket v1.8.15
@@ -10,8 +11,8 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/k2-fsa/sherpa-onnx-go v1.13.7
 	github.com/openai/openai-go/v3 v3.56.0
+	github.com/tphakala/go-opus v1.1.0
 	golang.org/x/term v0.45.0
-	gopkg.in/hraban/opus.v2 v2.0.0-20230925203106-0188a62cb302
 	gopkg.in/yaml.v3 v3.0.1
 	tinygo.org/x/bluetooth v0.16.0
 )
@@ -40,6 +41,7 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/tinygo-org/cbgo v0.0.4 // indirect
 	github.com/tinygo-org/pio v0.3.0 // indirect
+	github.com/tphakala/simd v1.8.0 // indirect
 	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/exp v0.0.0-20260727155853-b88d891fe743 // indirect
 	golang.org/x/net v0.57.0 // indirect

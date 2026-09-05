@@ -1,3 +1,5 @@
+github.com/caitunai/lc3 v1.0.0 h1:Db1toL6qdY3xcDvI9QnAIxIl7rMxGxvSgGNRMBLlSm4=
+github.com/caitunai/lc3 v1.0.0/go.mod h1:l93phMGal7Q/03Pz4iWg09lxAFTy+AVGvtB1tRS6v1c=
 github.com/cenkalti/backoff v2.2.1+incompatible h1:tNowT99t7UNflLxfYYSlKYsBpXdEet03Pg2g16Swow4=
 github.com/cenkalti/backoff v2.2.1+incompatible/go.mod h1:90ReRw6GdpyfrHakVjL/QHaoyV4aDUVVkXQJJJ3NXXM=
 github.com/chromedp/cdproto v0.0.0-20260714215040-dc233986426f h1:0Z1zcSLEmnj2c2CmJYBqewtS6pxhB39bNWUSEUAWjgk=
@@ -62,8 +64,8 @@ github.com/soypat/seqs v0.0.0-20260125140838-2c1c6b1bd69e/go.mod h1:oCVCNGCHMKoB
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/testify v1.2.2/go.mod h1:a8OnRcib4nhh0OaRAV+Yts87kKdq0PP7pXfy6kDkUVs=
 github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
-github.com/stretchr/testify v1.7.5 h1:s5PTfem8p8EbKQOctVV53k6jCJt3UX4IEJzwh+C324Q=
-github.com/stretchr/testify v1.7.5/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO+kdMU+MU=
+github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
+github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/tidwall/gjson v1.14.2/go.mod h1:/wbyibRr2FHMks5tjHJ5F8dMZh3AcwJEMf5vlfC0lxk=
 github.com/tidwall/gjson v1.19.0 h1:xwxm7n691Uf3u5OFjzngavjGTh55KX5q/9w9xHW88JU=
 github.com/tidwall/gjson v1.19.0/go.mod h1:V37/opeE/JbLUOfH0QTXiNez2l0RUjYUhpT4szFQAfc=
@@ -78,6 +80,10 @@ github.com/tinygo-org/cbgo v0.0.4 h1:3D76CRYbH03Rudi8sEgs/YO0x3JIMdyq8jlQtk/44fU
 github.com/tinygo-org/cbgo v0.0.4/go.mod h1:7+HgWIHd4nbAz0ESjGlJ1/v9LDU1Ox8MGzP9mah/fLk=
 github.com/tinygo-org/pio v0.3.0 h1:opEnOtw58KGB4RJD3/n/Rd0/djYGX3DeJiXLI6y/yDI=
 github.com/tinygo-org/pio v0.3.0/go.mod h1:wf6c6lKZp+pQOzKKcpzchmRuhiMc27ABRuo7KVnaMFU=
+github.com/tphakala/go-opus v1.1.0 h1:SbXQjwI/ZYy6wPXd0fafLTurkUbAhBpaYnvXYtn8uIo=
+github.com/tphakala/go-opus v1.1.0/go.mod h1:57hQHipntY2+xK7sycF4CYVSXDLW3V+AiX77iOJlojQ=
+github.com/tphakala/simd v1.8.0 h1:VeJhos1/QbYqy3nkBlqU4D9T0OxfUEOJZ8pEzMmVJNc=
+github.com/tphakala/simd v1.8.0/go.mod h1:RDX4bQNU8wV5JAYHEkic0l1CcQpBUwV7odEISuOvpUY=
 golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACkg1iLfiJU5Ep61QUkGW8qpdssI0+w=
 golang.org/x/crypto v0.0.0-20191011191535-87dc89f01550/go.mod h1:yigFU9vqHzYiE8UmvKecakEJjdnWj3jj499lnFckfCI=
 golang.org/x/crypto v0.54.0 h1:YLIA59K4fiNzHzjnZt2tUJQjQtUWfWbeHBqKtk3eScw=
@@ -110,8 +116,6 @@ golang.org/x/tools v0.0.0-20191216052735-49a3e744a425/go.mod h1:TB2adYChydJhpapK
 golang.org/x/xerrors v0.0.0-20191011141410-1b5146add898/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
-gopkg.in/hraban/opus.v2 v2.0.0-20230925203106-0188a62cb302 h1:xeVptzkP8BuJhoIjNizd2bRHfq9KB9HfOLZu90T04XM=
-gopkg.in/hraban/opus.v2 v2.0.0-20230925203106-0188a62cb302/go.mod h1:/L5E7a21VWl8DeuCPKxQBdVG5cy+L0MRZ08B1wnqt7g=
 gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
 gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
 gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
