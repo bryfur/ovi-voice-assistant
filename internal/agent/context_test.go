@@ -9,11 +9,11 @@ import (
 func TestScheduleAndCancelTimer(t *testing.T) {
 	c := &Context{}
 
-	c.ScheduleTimer(60, "pasta")
+	c.ScheduleTimer(time.Minute, "pasta")
 	status := c.TimerStatus()
 	cancelled := c.CancelTimer("pasta")
 
-	if len(status) != 1 || status["pasta"] < 58 || status["pasta"] > 60 {
+	if len(status) != 1 || status["pasta"] < 58*time.Second || status["pasta"] > time.Minute {
 		t.Fatalf("status = %v", status)
 	}
 	if !cancelled || c.CancelTimer("pasta") || len(c.TimerStatus()) != 0 {
@@ -32,7 +32,7 @@ func TestTimerFiresAnnouncement(t *testing.T) {
 		close(done)
 	}}
 
-	c.ScheduleTimer(0.01, "egg")
+	c.ScheduleTimer(10*time.Millisecond, "egg")
 
 	select {
 	case <-done:
@@ -46,20 +46,14 @@ func TestTimerFiresAnnouncement(t *testing.T) {
 	}
 }
 
-func TestTimerWithoutAnnounceDoesNotPanic(t *testing.T) {
-	c := &Context{}
-
-	c.ScheduleTimer(0.001, "x")
-	time.Sleep(20 * time.Millisecond)
-}
-
 func TestRescheduleReplacesTimer(t *testing.T) {
 	c := &Context{}
 
-	c.ScheduleTimer(100, "a")
-	c.ScheduleTimer(5, "a")
+	c.ScheduleTimer(100*time.Second, "a")
+	c.ScheduleTimer(5*time.Second, "a")
 
-	if s := c.TimerStatus(); len(s) != 1 || s["a"] > 5 {
+	if s := c.TimerStatus(); len(s) != 1 || s["a"] > 5*time.Second {
 		t.Fatalf("status = %v", s)
 	}
+	c.CancelTimer("a")
 }

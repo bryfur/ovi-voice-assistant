@@ -73,9 +73,6 @@ func NewWiFiTransport(host string, port int, encryptionKey string) *WiFiTranspor
 	return t
 }
 
-// Host returns the configured host.
-func (t *WiFiTransport) Host() string { return t.host }
-
 // Port returns the configured port.
 func (t *WiFiTransport) Port() int { return t.port }
 

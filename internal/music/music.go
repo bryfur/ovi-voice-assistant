@@ -3,6 +3,7 @@ package music
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 )
 
@@ -35,16 +36,39 @@ func Browsers() map[string]BrowserMusic {
 // Tests may replace it.
 var SearchMusicFunc = SearchMusic
 
-// ResolveYouTubeID finds the best YouTube Music video ID for a search query.
-func ResolveYouTubeID(ctx context.Context, query string) (string, error) {
-	tracks, err := SearchYouTube(ctx, query, 1)
-	if err != nil {
-		return "", err
+// StartServices launches and registers the configured browser providers
+// ("spotify", "apple"). Apple Music login is awaited in the background.
+// The returned func shuts them down.
+func StartServices(ctx context.Context, names []string, sampleRate int) func() {
+	var sessions []*BrowserSession
+	for _, name := range names {
+		var b BrowserMusic
+		var session *BrowserSession
+		switch name {
+		case "spotify":
+			s := NewSpotifyMusic(sampleRate)
+			b, session = s, s.BrowserSession
+		case "apple":
+			a := NewAppleMusic(sampleRate)
+			b, session = a, a.BrowserSession
+			defer func() { go func() { _ = a.WaitForLogin(ctx) }() }()
+		default:
+			slog.Warn("Unknown music service", "name", name)
+			continue
+		}
+		if err := session.Start(ctx); err != nil {
+			slog.Error("Music service failed to start", "name", name, "err", err)
+			continue
+		}
+		RegisterBrowser(name, b)
+		sessions = append(sessions, session)
+		slog.Info("Music service ready", "name", name)
 	}
-	if len(tracks) == 0 {
-		return "", nil
+	return func() {
+		for _, s := range sessions {
+			s.Close()
+		}
 	}
-	return tracks[0].VideoID, nil
 }
 
 // SearchMusic searches for music; service selects the provider.

@@ -93,24 +93,12 @@ func (c *DeviceConnection) Context() *agent.Context {
 	return c.context
 }
 
-// Output returns the voice output (for tests).
-func (c *DeviceConnection) Output() *pipeline.EncodingOutput { return c.output }
-
 // SetScheduler attaches the scheduler so automation tools are available.
 func (c *DeviceConnection) SetScheduler(s *scheduler.Scheduler) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.context != nil {
 		c.context.Scheduler = s
-	}
-}
-
-// SetMemory attaches memory so recall/retain are available.
-func (c *DeviceConnection) SetMemory(m agent.MemoryStore) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.context != nil {
-		c.context.Memory = m
 	}
 }
 

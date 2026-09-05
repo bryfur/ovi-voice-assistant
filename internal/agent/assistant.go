@@ -9,12 +9,13 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
+
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/shared"
 
 	"github.com/bryfur/ovi-voice-assistant/internal/config"
-	"github.com/bryfur/ovi-voice-assistant/internal/llm"
 	"github.com/bryfur/ovi-voice-assistant/internal/mcp"
-	"github.com/bryfur/ovi-voice-assistant/internal/memory"
 )
 
 // MaxTurns bounds the tool-calling loop per user input.
@@ -23,36 +24,31 @@ const MaxTurns = 10
 // FailureMessage is spoken when the model call fails.
 const FailureMessage = "Sorry, I could not process that."
 
-// ChatStreamer is the model interface used by the agent loop.
-type ChatStreamer interface {
-	ChatStream(ctx context.Context, req llm.ChatRequest, onDelta func(string)) (*llm.StreamResult, error)
-}
-
-// SubAgentConfig defines a sub-agent exposed to the main agent as a tool.
-type SubAgentConfig struct {
+// SubAgent is a nested agent exposed to the main agent as a tool.
+type SubAgent struct {
 	Name         string             `json:"name"`
 	Description  string             `json:"description"`
 	Instructions string             `json:"instructions"`
 	MCPServers   []mcp.ServerConfig `json:"mcp_servers"`
+
+	servers []*mcp.Client
 }
 
-// ParseSubAgents parses a JSON array of SubAgentConfig, or "@path".
-func ParseSubAgents(raw string) ([]SubAgentConfig, error) {
+// ParseSubAgents parses a JSON array of sub-agents, or "@path" to a file.
+func ParseSubAgents(raw string) ([]*SubAgent, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil
 	}
-	var data []byte
+	data := []byte(raw)
 	if strings.HasPrefix(raw, "@") {
 		b, err := os.ReadFile(config.ExpandUser(raw[1:]))
 		if err != nil {
 			return nil, fmt.Errorf("read agents config: %w", err)
 		}
 		data = b
-	} else {
-		data = []byte(raw)
 	}
-	var agents []SubAgentConfig
+	var agents []*SubAgent
 	if err := json.Unmarshal(data, &agents); err != nil {
 		return nil, fmt.Errorf("parse agents config: %w", err)
 	}
@@ -64,89 +60,67 @@ func ParseSubAgents(raw string) ([]SubAgentConfig, error) {
 	return agents, nil
 }
 
-// subAgent is a nested agent with its own instructions and MCP tools.
-type subAgent struct {
-	cfg     SubAgentConfig
-	servers []*mcp.Client
-}
+type messages = []openai.ChatCompletionMessageParamUnion
 
-// Assistant is a conversational agent with token streaming, built-in tools,
-// MCP servers and sub-agents.
+// Assistant runs the model with tools and keeps per-session history.
 type Assistant struct {
-	settings *config.Settings
-	model    ChatStreamer
+	cfg    config.LLMConfig
+	client openai.Client
 
-	tools      []Tool
-	mcpClients []*mcp.Client
-	subAgents  []*subAgent
-
+	tools   []Tool // builtins + sub-agents
+	mcp     []*mcp.Client
+	subs    []*SubAgent
 	mu      sync.Mutex
-	history []llm.Message
-	loaded  bool
-
-	// NewModel constructs the model client; tests may override it.
-	NewModel func(settings *config.Settings) ChatStreamer
+	history messages
 }
 
 // New creates an unloaded assistant.
-func New(settings *config.Settings) *Assistant {
-	return &Assistant{
-		settings: settings,
-		NewModel: func(s *config.Settings) ChatStreamer {
-			return llm.New(s.LLM.BaseURL, s.LLM.APIKey)
-		},
-	}
-}
+func New(cfg config.LLMConfig) *Assistant { return &Assistant{cfg: cfg} }
 
-// Load parses the MCP/sub-agent configuration and builds the model client.
+// Load parses the MCP and sub-agent configuration and builds the client.
 func (a *Assistant) Load() error {
-	slog.Info("Initializing agent", "model", a.settings.LLM.Model)
-	if a.settings.LLM.BaseURL != "" {
-		slog.Info("  Base URL", "url", a.settings.LLM.BaseURL)
+	opts := []option.RequestOption{option.WithMaxRetries(1)}
+	if a.cfg.BaseURL != "" {
+		opts = append(opts, option.WithBaseURL(a.cfg.BaseURL))
 	}
-	servers, err := mcp.ParseServers(a.settings.LLM.MCPServers)
+	if a.cfg.APIKey != "" {
+		opts = append(opts, option.WithAPIKey(a.cfg.APIKey))
+	}
+	a.client = openai.NewClient(opts...)
+
+	servers, err := mcp.ParseServers(a.cfg.MCPServers)
 	if err != nil {
 		return err
 	}
-	a.mcpClients = nil
+	a.mcp = nil
 	for _, s := range servers {
-		a.mcpClients = append(a.mcpClients, mcp.NewClient(s))
+		a.mcp = append(a.mcp, mcp.NewClient(s))
 	}
-	if len(a.mcpClients) > 0 {
-		names := make([]string, len(a.mcpClients))
-		for i, c := range a.mcpClients {
-			names[i] = c.Name()
-		}
-		slog.Info("  MCP servers", "names", names)
-	}
-
-	a.model = a.NewModel(a.settings)
-
-	subs, err := ParseSubAgents(a.settings.LLM.Agents)
-	if err != nil {
+	if a.subs, err = ParseSubAgents(a.cfg.Agents); err != nil {
 		return err
 	}
-	a.subAgents = nil
 	a.tools = BuiltinTools()
-	for _, cfg := range subs {
-		sa := &subAgent{cfg: cfg}
-		for _, s := range cfg.MCPServers {
-			c := mcp.NewClient(s)
-			sa.servers = append(sa.servers, c)
-			a.mcpClients = append(a.mcpClients, c)
+	for _, sub := range a.subs {
+		for _, s := range sub.MCPServers {
+			sub.servers = append(sub.servers, mcp.NewClient(s))
 		}
-		a.subAgents = append(a.subAgents, sa)
-		a.tools = append(a.tools, a.subAgentTool(sa))
-		slog.Info("  Sub-agent", "name", cfg.Name)
+		a.tools = append(a.tools, a.subAgentTool(sub))
 	}
-	a.loaded = true
-	slog.Info("Agent initialized")
+	slog.Info("Agent ready", "model", a.cfg.Model, "mcp", len(a.mcp), "sub_agents", len(a.subs))
 	return nil
 }
 
-// Start launches MCP server connections.
+func (a *Assistant) allMCP() []*mcp.Client {
+	all := append([]*mcp.Client(nil), a.mcp...)
+	for _, sub := range a.subs {
+		all = append(all, sub.servers...)
+	}
+	return all
+}
+
+// Start launches MCP servers.
 func (a *Assistant) Start(ctx context.Context) error {
-	for _, c := range a.mcpClients {
+	for _, c := range a.allMCP() {
 		if err := c.Start(ctx); err != nil {
 			return err
 		}
@@ -155,41 +129,19 @@ func (a *Assistant) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop terminates MCP server connections.
-func (a *Assistant) Stop(ctx context.Context) error {
-	for _, c := range a.mcpClients {
-		done := make(chan struct{})
-		go func(c *mcp.Client) {
-			defer close(done)
-			if err := c.Close(); err != nil {
-				slog.Error("Error stopping MCP server", "name", c.Name(), "err", err)
-			}
-		}(c)
-		select {
-		case <-done:
-		case <-time.After(3 * time.Second):
-			slog.Debug("MCP server did not stop cleanly", "name", c.Name())
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+// Stop terminates MCP servers.
+func (a *Assistant) Stop(context.Context) error {
+	for _, c := range a.allMCP() {
+		_ = c.Close()
 	}
 	return nil
 }
 
-// ResetHistory clears conversation history. Call at the start of a new
-// wake word session.
+// ResetHistory starts a fresh conversation (called on each wake word).
 func (a *Assistant) ResetHistory() {
 	a.mu.Lock()
 	a.history = nil
 	a.mu.Unlock()
-	slog.Debug("Conversation history reset")
-}
-
-// History returns a copy of the conversation history.
-func (a *Assistant) History() []llm.Message {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return append([]llm.Message(nil), a.history...)
 }
 
 // RunText runs the agent and returns the full response.
@@ -200,32 +152,17 @@ func (a *Assistant) RunText(ctx context.Context, text string, actx *Context) (st
 }
 
 // RunStreamed runs the agent with session history, invoking onToken for
-// each content token. Model failures are logged and reported to the user
-// as FailureMessage rather than returned as errors; only context
-// cancellation is returned.
+// each content token. Model failures are spoken as FailureMessage; only
+// context cancellation is returned as an error.
 func (a *Assistant) RunStreamed(ctx context.Context, text string, actx *Context, onToken func(string)) error {
-	if !a.loaded {
-		return errors.New("call Load() first")
-	}
-	slog.Debug("Agent processing", "text", truncate(text, 80))
-
-	// Auto-recall: inject relevant memories into the prompt
-	input := text
-	if actx != nil && actx.Memory != nil {
-		input = a.injectMemories(ctx, text, actx)
-	}
-
 	a.mu.Lock()
-	history := append([]llm.Message(nil), a.history...)
+	msgs := append(messages{openai.SystemMessage(a.cfg.Instructions)}, a.history...)
 	a.mu.Unlock()
+	msgs = append(msgs, openai.UserMessage(text))
 
-	messages := make([]llm.Message, 0, len(history)+2)
-	messages = append(messages, llm.Message{Role: "system", Content: a.settings.LLM.Instructions})
-	messages = append(messages, history...)
-	messages = append(messages, llm.Message{Role: "user", Content: input})
-
-	tools := a.toolDefs()
-	if err := a.loop(ctx, &messages, tools, a.allTools(), actx, onToken); err != nil {
+	defs, handlers := a.toolset(a.tools, a.mcp)
+	err := a.loop(ctx, &msgs, defs, handlers, actx, onToken)
+	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -234,58 +171,65 @@ func (a *Assistant) RunStreamed(ctx context.Context, text string, actx *Context,
 			onToken(FailureMessage)
 		}
 	}
-
 	a.mu.Lock()
-	a.history = messages[1:] // drop system prompt
+	a.history = msgs[1:] // drop the system prompt
 	a.mu.Unlock()
-	slog.Debug("Agent response complete")
 	return nil
 }
 
-// loop runs the model/tool loop until a final answer is produced.
-func (a *Assistant) loop(ctx context.Context, messages *[]llm.Message, defs []llm.ToolDef, lookup map[string]Handler, actx *Context, onToken func(string)) error {
-	for turn := 0; turn < MaxTurns; turn++ {
-		res, err := a.model.ChatStream(ctx, llm.ChatRequest{
-			Model:    a.settings.LLM.Model,
-			Messages: *messages,
-			Tools:    defs,
-		}, onToken)
-		if err != nil {
+// loop streams completions and executes tool calls until the model
+// answers without calling a tool.
+func (a *Assistant) loop(ctx context.Context, msgs *messages, defs []openai.ChatCompletionToolUnionParam,
+	handlers map[string]Handler, actx *Context, onToken func(string)) error {
+	for range MaxTurns {
+		params := openai.ChatCompletionNewParams{Model: shared.ChatModel(a.cfg.Model), Messages: *msgs}
+		if len(defs) > 0 {
+			params.Tools = defs
+		}
+		stream := a.client.Chat.Completions.NewStreaming(ctx, params)
+		var acc openai.ChatCompletionAccumulator
+		for stream.Next() {
+			chunk := stream.Current()
+			acc.AddChunk(chunk)
+			if onToken != nil && len(chunk.Choices) > 0 {
+				if c := chunk.Choices[0].Delta.Content; c != "" {
+					onToken(c)
+				}
+			}
+		}
+		if err := stream.Err(); err != nil {
 			return err
 		}
-		*messages = append(*messages, res.AssistantMessage())
-		if len(res.ToolCalls) == 0 {
+		if len(acc.Choices) == 0 {
+			return errors.New("empty completion")
+		}
+		msg := acc.Choices[0].Message
+		*msgs = append(*msgs, msg.ToParam())
+		if len(msg.ToolCalls) == 0 {
 			return nil
 		}
-		for _, call := range res.ToolCalls {
-			result := a.executeTool(ctx, call, lookup, actx)
-			*messages = append(*messages, llm.Message{
-				Role:       "tool",
-				ToolCallID: call.ID,
-				Name:       call.Function.Name,
-				Content:    result,
-			})
+		for _, call := range msg.ToolCalls {
+			result := a.call(ctx, handlers, actx, call.Function.Name, call.Function.Arguments)
+			*msgs = append(*msgs, openai.ToolMessage(result, call.ID))
 		}
 	}
 	return fmt.Errorf("max turns (%d) exceeded", MaxTurns)
 }
 
-func (a *Assistant) executeTool(ctx context.Context, call llm.ToolCall, lookup map[string]Handler, actx *Context) string {
-	name := call.Function.Name
-	handler, ok := lookup[name]
+func (a *Assistant) call(ctx context.Context, handlers map[string]Handler, actx *Context, name, rawArgs string) string {
+	h, ok := handlers[name]
 	if !ok {
-		slog.Warn("Model called unknown tool", "name", name)
-		return fmt.Sprintf("Error: unknown tool '%s'", name)
+		return "Error: unknown tool '" + name + "'"
 	}
-	args, err := ParseArgs(call.Function.Arguments)
+	args, err := ParseArgs(rawArgs)
 	if err != nil {
 		return "Error: " + err.Error()
 	}
-	slog.Debug("Tool call", "name", name, "args", truncate(call.Function.Arguments, 200))
+	slog.Debug("Tool call", "name", name, "args", rawArgs)
 	if actx == nil {
 		actx = &Context{}
 	}
-	out, err := handler(ctx, actx, args)
+	out, err := h(ctx, actx, args)
 	if err != nil {
 		slog.Error("Tool failed", "name", name, "err", err)
 		if out == "" {
@@ -295,146 +239,52 @@ func (a *Assistant) executeTool(ctx context.Context, call llm.ToolCall, lookup m
 	return out
 }
 
-// toolDefs returns the model-visible tool definitions: enabled builtins,
-// sub-agents and MCP tools.
-func (a *Assistant) toolDefs() []llm.ToolDef {
-	var defs []llm.ToolDef
-	seen := map[string]bool{}
-	for _, t := range a.tools {
-		if !t.Enabled || seen[t.Name] {
-			continue
+// toolset builds the model-visible definitions and handler map for a set
+// of tools and MCP servers. First definition of a name wins.
+func (a *Assistant) toolset(tools []Tool, servers []*mcp.Client) ([]openai.ChatCompletionToolUnionParam, map[string]Handler) {
+	var defs []openai.ChatCompletionToolUnionParam
+	handlers := map[string]Handler{}
+	add := func(t Tool) {
+		if _, dup := handlers[t.Name]; dup {
+			slog.Warn("Duplicate tool name ignored", "name", t.Name)
+			return
 		}
-		seen[t.Name] = true
+		handlers[t.Name] = t.Handler
 		defs = append(defs, t.Def())
 	}
-	for _, c := range a.topLevelMCP() {
+	for _, t := range tools {
+		add(t)
+	}
+	for _, c := range servers {
 		for _, mt := range c.Tools() {
-			if seen[mt.Name] {
-				slog.Warn("Duplicate tool name ignored", "name", mt.Name, "server", c.Name())
-				continue
-			}
-			seen[mt.Name] = true
-			defs = append(defs, mcpToolDef(mt))
+			add(Tool{Name: mt.Name, Description: mt.Description, Parameters: mt.InputSchema,
+				Handler: func(ctx context.Context, _ *Context, args Args) (string, error) {
+					return c.CallTool(ctx, mt.Name, args)
+				}})
 		}
 	}
-	return defs
+	return defs, handlers
 }
 
-// allTools maps tool names to handlers for the main agent.
-func (a *Assistant) allTools() map[string]Handler {
-	lookup := map[string]Handler{}
-	for _, t := range a.tools {
-		if _, dup := lookup[t.Name]; !dup {
-			lookup[t.Name] = t.Handler
-		}
-	}
-	for _, c := range a.topLevelMCP() {
-		for _, mt := range c.Tools() {
-			if _, dup := lookup[mt.Name]; dup {
-				continue
-			}
-			lookup[mt.Name] = mcpHandler(c, mt.Name)
-		}
-	}
-	return lookup
-}
-
-// topLevelMCP returns MCP clients attached to the main agent (not sub-agents).
-func (a *Assistant) topLevelMCP() []*mcp.Client {
-	sub := map[*mcp.Client]bool{}
-	for _, sa := range a.subAgents {
-		for _, c := range sa.servers {
-			sub[c] = true
-		}
-	}
-	var out []*mcp.Client
-	for _, c := range a.mcpClients {
-		if !sub[c] {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
-func mcpToolDef(t mcp.Tool) llm.ToolDef {
-	params := t.InputSchema
-	if params == nil {
-		params = map[string]any{"type": "object", "properties": map[string]any{}}
-	}
-	return llm.ToolDef{Type: "function", Function: llm.FunctionDef{
-		Name: t.Name, Description: t.Description, Parameters: params,
-	}}
-}
-
-func mcpHandler(c *mcp.Client, name string) Handler {
-	return func(ctx context.Context, _ *Context, args Args) (string, error) {
-		return c.CallTool(ctx, name, args)
-	}
-}
-
-// subAgentTool exposes a sub-agent as a tool taking a single "input".
-func (a *Assistant) subAgentTool(sa *subAgent) Tool {
+// subAgentTool exposes a sub-agent as a tool with a single "input".
+func (a *Assistant) subAgentTool(sub *SubAgent) Tool {
 	return Tool{
-		Name:        sa.cfg.Name,
-		Description: sa.cfg.Description,
+		Name:        sub.Name,
+		Description: sub.Description,
 		Parameters: schema([]string{"input"}, map[string]any{
-			"input": prop("string", "The request to hand to the "+sa.cfg.Name+" agent."),
+			"input": prop("string", "The request for the "+sub.Name+" agent."),
 		}),
-		Enabled: true,
 		Handler: func(ctx context.Context, actx *Context, args Args) (string, error) {
-			return a.runSubAgent(ctx, sa, args.String("input", ""), actx)
+			msgs := messages{openai.SystemMessage(sub.Instructions), openai.UserMessage(args.String("input", ""))}
+			defs, handlers := a.toolset(nil, sub.servers)
+			if err := a.loop(ctx, &msgs, defs, handlers, actx, nil); err != nil {
+				return "", err
+			}
+			last := msgs[len(msgs)-1]
+			if last.OfAssistant != nil {
+				return last.OfAssistant.Content.OfString.Value, nil
+			}
+			return "", nil
 		},
 	}
-}
-
-// runSubAgent runs a nested, history-less loop with the sub-agent's tools.
-func (a *Assistant) runSubAgent(ctx context.Context, sa *subAgent, input string, actx *Context) (string, error) {
-	var defs []llm.ToolDef
-	lookup := map[string]Handler{}
-	for _, c := range sa.servers {
-		for _, mt := range c.Tools() {
-			if _, dup := lookup[mt.Name]; dup {
-				continue
-			}
-			defs = append(defs, mcpToolDef(mt))
-			lookup[mt.Name] = mcpHandler(c, mt.Name)
-		}
-	}
-	messages := []llm.Message{
-		{Role: "system", Content: sa.cfg.Instructions},
-		{Role: "user", Content: input},
-	}
-	if err := a.loop(ctx, &messages, defs, lookup, actx, nil); err != nil {
-		return "", err
-	}
-	last := messages[len(messages)-1]
-	return last.Content, nil
-}
-
-// injectMemories recalls relevant memories and prepends them to the input.
-func (a *Assistant) injectMemories(ctx context.Context, text string, actx *Context) string {
-	result, err := actx.Memory.Recall(ctx, text, memory.BudgetMid, 256)
-	if err != nil {
-		slog.Error("Memory recall failed, proceeding without context", "err", err)
-		return text
-	}
-	if len(result.Results) == 0 {
-		return text
-	}
-	var sb strings.Builder
-	for _, f := range result.Results {
-		sb.WriteString("- ")
-		sb.WriteString(f.Text)
-		sb.WriteString("\n")
-	}
-	slog.Debug("Injected memories", "count", len(result.Results))
-	return "[Relevant memories]\n" + strings.TrimRight(sb.String(), "\n") + "\n\n[User]\n" + text
-}
-
-func truncate(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n])
 }

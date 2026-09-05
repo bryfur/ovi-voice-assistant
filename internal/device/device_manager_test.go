@@ -116,5 +116,4 @@ func TestAnnounceAllAndSetters(t *testing.T) {
 		return len(pl.announces) == 2
 	})
 	m.SetScheduler(nil)
-	m.SetMemory(nil)
 }

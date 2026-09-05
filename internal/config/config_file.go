@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -69,16 +70,8 @@ func sectionOrder(cfg map[string]any) []string {
 			rest = append(rest, k)
 		}
 	}
-	sortStrings(rest)
+	slices.Sort(rest)
 	return append(keys, rest...)
-}
-
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
 }
 
 // RawDevices extracts the device list from a raw config (string or list).

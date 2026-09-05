@@ -228,7 +228,6 @@ func (t *BLETransport) scan() (bluetooth.Address, error) {
 		found    *hit
 		fallback *hit
 	)
-	done := make(chan struct{})
 	timer := time.AfterFunc(BLEScanTimeout, func() { _ = t.adapter.StopScan() })
 	defer timer.Stop()
 
@@ -255,7 +254,6 @@ func (t *BLETransport) scan() (bluetooth.Address, error) {
 			_ = a.StopScan()
 		}
 	})
-	close(done)
 	if err != nil {
 		return bluetooth.Address{}, fmt.Errorf("BLE scan: %w", err)
 	}
@@ -301,18 +299,18 @@ func (t *BLETransport) establish() error {
 	var audioTx, audioRx, control *bluetooth.DeviceCharacteristic
 	for i := range chars {
 		c := &chars[i]
-		switch strings.ToUpper(c.UUID().String()) {
-		case ServiceUUIDUpper(AudioTxUUID):
+		switch uuid := c.UUID().String(); {
+		case strings.EqualFold(uuid, AudioTxUUID):
 			audioTx = c
-		case ServiceUUIDUpper(AudioRxUUID):
+		case strings.EqualFold(uuid, AudioRxUUID):
 			audioRx = c
-		case ServiceUUIDUpper(ControlUUID):
+		case strings.EqualFold(uuid, ControlUUID):
 			control = c
 		}
 	}
 	if audioTx == nil || audioRx == nil || control == nil {
 		_ = dev.Disconnect()
-		return errors.New("Ovi GATT characteristics not found")
+		return errors.New("ovi GATT characteristics not found")
 	}
 
 	t.mu.Lock()
@@ -334,9 +332,6 @@ func (t *BLETransport) establish() error {
 	slog.Debug("Subscribed to CONTROL notifications")
 	return nil
 }
-
-// ServiceUUIDUpper normalises a UUID string for comparison.
-func ServiceUUIDUpper(s string) string { return strings.ToUpper(s) }
 
 func (t *BLETransport) onConnectionChange(dev bluetooth.Device, connected bool) {
 	if connected {

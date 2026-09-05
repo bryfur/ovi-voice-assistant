@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -109,7 +110,7 @@ func (s *Scheduler) Automations() []Automation {
 func (s *Scheduler) Create(name, schedule, prompt string) (Automation, error) {
 	if !ValidateCron(schedule) {
 		return Automation{}, fmt.Errorf(
-			"Invalid cron expression: %q. Expected 5 fields: minute hour day-of-month month day-of-week",
+			"invalid cron expression %q: expected 5 fields (minute hour day-of-month month day-of-week)",
 			schedule)
 	}
 	auto := Automation{
@@ -251,7 +252,7 @@ func (s *Scheduler) Fire(ctx context.Context, a Automation) {
 		slog.Error("Automation failed", "name", a.Name, "err", err)
 		return
 	}
-	if len([]rune(response)) == 0 || isBlank(response) {
+	if strings.TrimSpace(response) == "" {
 		slog.Warn("Automation produced empty response", "name", a.Name)
 		return
 	}
@@ -260,15 +261,6 @@ func (s *Scheduler) Fire(ctx context.Context, a Automation) {
 		return
 	}
 	slog.Info("Automation announced", "name", a.Name, "response", truncate(response, 80))
-}
-
-func isBlank(s string) bool {
-	for _, r := range s {
-		if r != ' ' && r != '\n' && r != '\t' && r != '\r' {
-			return false
-		}
-	}
-	return true
 }
 
 func newID() string {

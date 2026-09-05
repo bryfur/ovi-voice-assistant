@@ -1,35 +1,37 @@
-// Package stt implements speech-to-text providers with Silero VAD
+// Package stt implements speech-to-text on sherpa-onnx with Silero VAD
 // end-of-speech detection.
 package stt
 
 import (
 	"context"
 	"fmt"
+	"runtime"
 
 	"github.com/bryfur/ovi-voice-assistant/internal/config"
 )
 
-// VADStartCallback fires when VAD detects speech start.
-type VADStartCallback func()
+// SampleRate is the fixed device microphone rate.
+const SampleRate = 16000
 
-// STT is a speech-to-text engine.
+// STT listens to a mic stream and returns what was said.
 type STT interface {
-	// Load loads models; must be called before transcription.
 	Load() error
-	// Transcribe transcribes a complete 16 kHz mono PCM buffer.
-	Transcribe(pcm []byte) (string, error)
-	// TranscribeStream consumes mic audio until end-of-speech and returns
-	// the transcript. onVADStart may be nil.
-	TranscribeStream(ctx context.Context, chunks <-chan []byte, onVADStart VADStartCallback) (string, error)
+	// Listen consumes 16 kHz mono PCM until the user stops speaking and
+	// returns the transcript ("" if nothing was said). onSpeech fires when
+	// speech is first detected.
+	Listen(ctx context.Context, mic <-chan []byte, onSpeech func()) (string, error)
+	Close()
 }
 
-// Create builds the configured STT provider.
-func Create(settings *config.Settings) (STT, error) {
-	switch settings.STT.Provider {
-	case "whisper":
-		return NewWhisperSTT(settings), nil
+// New builds the configured provider.
+func New(cfg config.STTConfig) (STT, error) {
+	switch cfg.Provider {
 	case "nemotron":
-		return NewNemotronSTT(settings), nil
+		return newNemotron(cfg), nil
+	case "whisper":
+		return newWhisper(cfg), nil
 	}
-	return nil, fmt.Errorf("unknown STT provider: %s", settings.STT.Provider)
+	return nil, fmt.Errorf("unknown STT provider %q", cfg.Provider)
 }
+
+func threads() int { return min(runtime.NumCPU(), 8) }

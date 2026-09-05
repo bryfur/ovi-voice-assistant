@@ -116,20 +116,6 @@ func NewBrowserSession(url, profileName string, sampleRate int) *BrowserSession 
 	}
 }
 
-// BrowserSampleRate reports the capture sample rate announced by the page.
-func (b *BrowserSession) BrowserSampleRate() int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.browserSampleRate
-}
-
-// BrowserChannels reports the capture channel count announced by the page.
-func (b *BrowserSession) BrowserChannels() int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.browserChannels
-}
-
 // Start launches the browser, opens the music service and starts the
 // WebSocket audio bridge.
 func (b *BrowserSession) Start(ctx context.Context) error {

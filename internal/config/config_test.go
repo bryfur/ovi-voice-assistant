@@ -74,7 +74,7 @@ func TestDefaults(t *testing.T) {
 	if s.LLM.Model != "gpt-4o-mini" || s.STT.Provider != "nemotron" || s.TTS.Provider != "kokoro" {
 		t.Fatalf("unexpected defaults: %+v", s)
 	}
-	if s.Transport.Codec != "lc3" || s.Mic.SampleRate != 16000 || !s.Memory.Enabled {
+	if s.Transport.Codec != "lc3" || s.STT.Model != "560ms" || s.TTS.Speed != 1 {
 		t.Fatalf("unexpected defaults: %+v", s)
 	}
 }
@@ -116,13 +116,13 @@ func TestLoadEnvOverridesYaml(t *testing.T) {
 	s, err := Load(LoadOptions{
 		ConfigPath:  path,
 		SkipEnvFile: true,
-		Environ:     []string{"OVI_LLM__MODEL=gpt-4o", "OVI_DEVICES=x.local", "OVI_MEMORY__ENABLED=false", "OVI_MIC__SAMPLE_RATE=8000"},
+		Environ:     []string{"OVI_LLM__MODEL=gpt-4o", "OVI_DEVICES=x.local", "OVI_MUSIC__SERVICES=spotify, apple", "OVI_TTS__SPEED=1.2"},
 	})
 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.LLM.Model != "gpt-4o" || s.Devices != "x.local" || s.Memory.Enabled || s.Mic.SampleRate != 8000 {
+	if s.LLM.Model != "gpt-4o" || s.Devices != "x.local" || len(s.Music.Services) != 2 || s.Music.Services[1] != "apple" || s.TTS.Speed != 1.2 {
 		t.Fatalf("got %+v", s)
 	}
 }
@@ -169,16 +169,6 @@ func TestSetUnknownKey(t *testing.T) {
 
 	if err == nil {
 		t.Fatal("expected error")
-	}
-}
-
-func TestSetPointerInt(t *testing.T) {
-	s := Default()
-
-	err := s.Set("tts.speaker_id", "3")
-
-	if err != nil || s.TTS.SpeakerID == nil || *s.TTS.SpeakerID != 3 {
-		t.Fatalf("got %v, %v", s.TTS.SpeakerID, err)
 	}
 }
 

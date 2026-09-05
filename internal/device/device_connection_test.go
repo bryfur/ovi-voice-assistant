@@ -172,14 +172,13 @@ func TestStartSendsAudioConfigAndBuildsContext(t *testing.T) {
 	}
 }
 
-func TestSetSchedulerAndMemory(t *testing.T) {
+func TestSetScheduler(t *testing.T) {
 	c, _, _ := newConn(t, Options{})
 
 	c.SetScheduler(nil)
-	c.SetMemory(nil)
 
-	if c.Context().Scheduler != nil || c.Context().Memory != nil {
-		t.Fatal("nil setters should clear")
+	if c.Context().Scheduler != nil {
+		t.Fatal("nil setter should clear")
 	}
 }
 

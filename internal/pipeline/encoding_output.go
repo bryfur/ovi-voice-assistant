@@ -82,9 +82,6 @@ func NewEncodingOutput(t transport.DeviceTransport, c codec.AudioCodec) *Encodin
 	return o
 }
 
-// Codec returns the output codec.
-func (o *EncodingOutput) Codec() codec.AudioCodec { return o.codec }
-
 // ensureWorker starts the worker goroutine if needed and returns the
 // current queue and stop channel.
 func (o *EncodingOutput) ensureWorker() (chan outputItem, chan struct{}) {

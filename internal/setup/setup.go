@@ -10,6 +10,7 @@ import (
 	"github.com/bryfur/ovi-voice-assistant/internal/console"
 	"github.com/bryfur/ovi-voice-assistant/internal/discovery"
 	"github.com/bryfur/ovi-voice-assistant/internal/flash"
+	"github.com/bryfur/ovi-voice-assistant/internal/tts"
 )
 
 // Available options for each provider.
@@ -17,33 +18,17 @@ var (
 	STTProviders   = []string{"nemotron", "whisper"}
 	TTSProviders   = []string{"kokoro", "piper"}
 	NemotronModels = []console.Option{
-		{Key: "int8-dynamic", Desc: "best for CPU (recommended)"},
-		{Key: "fp16", Desc: "best for NVIDIA GPU"},
-		{Key: "int8-static", Desc: "GPU, less VRAM than fp16"},
-		{Key: "fp32", Desc: "original precision, largest"},
+		{Key: "560ms", Desc: "balanced latency (recommended)"},
+		{Key: "160ms", Desc: "lowest latency, slightly less accurate"},
+		{Key: "1120ms", Desc: "most accurate, slower to finish"},
 	}
 	WhisperModels = []console.Option{
-		{Key: "whisper-1", Desc: "OpenAI hosted Whisper (recommended with OpenAI)"},
-		{Key: "tiny.en", Desc: "fastest, least accurate (English) — local server"},
-		{Key: "base.en", Desc: "good balance (English) — local server"},
-		{Key: "small.en", Desc: "more accurate, slower (English) — local server"},
-		{Key: "medium.en", Desc: "high accuracy, slow (English) — local server"},
-		{Key: "large-v3", Desc: "best accuracy, slowest — local server"},
-		{Key: "turbo", Desc: "large-v3 speed-optimized — local server"},
-		{Key: "distil-large-v3", Desc: "distilled, fast + accurate (English) — local server"},
-	}
-	KokoroVoices = []console.Option{
-		{Key: "af_heart", Desc: "Female American (default)"},
-		{Key: "af_bella", Desc: "Female American"},
-		{Key: "af_nicole", Desc: "Female American"},
-		{Key: "af_sarah", Desc: "Female American"},
-		{Key: "af_sky", Desc: "Female American"},
-		{Key: "am_adam", Desc: "Male American"},
-		{Key: "am_michael", Desc: "Male American"},
-		{Key: "bf_emma", Desc: "Female British"},
-		{Key: "bf_isabella", Desc: "Female British"},
-		{Key: "bm_george", Desc: "Male British"},
-		{Key: "bm_lewis", Desc: "Male British"},
+		{Key: "tiny.en", Desc: "fastest, least accurate (English)"},
+		{Key: "base.en", Desc: "good balance (English, recommended)"},
+		{Key: "small.en", Desc: "more accurate, slower (English)"},
+		{Key: "medium.en", Desc: "high accuracy, slow (English)"},
+		{Key: "turbo", Desc: "large-v3 speed-optimized (multilingual)"},
+		{Key: "distil-large-v3", Desc: "distilled, fast + accurate"},
 	}
 	Codecs = []console.Option{
 		{Key: "lc3", Desc: "low latency, good quality (recommended)"},
@@ -51,6 +36,20 @@ var (
 		{Key: "pcm", Desc: "uncompressed, highest bandwidth"},
 	}
 )
+
+// kokoroVoiceOptions describes the English Kokoro voices.
+func kokoroVoiceOptions() []console.Option {
+	desc := map[byte]string{'a': "American", 'b': "British"}
+	var out []console.Option
+	for _, v := range tts.KokoroVoices() {
+		gender := "Female"
+		if v[1] == 'm' {
+			gender = "Male"
+		}
+		out = append(out, console.Option{Key: v, Desc: gender + " " + desc[v[0]]})
+	}
+	return out
+}
 
 // Scan is the discovery function; tests may replace it.
 var Scan = func() []discovery.Device {
@@ -166,33 +165,29 @@ func Run(c *console.IO, configPath string) (map[string]any, error) {
 	// ── STT ──────────────────────────────────────────────────
 	c.Println()
 	c.Rule("Speech-to-Text")
-	c.Print("  Nemotron — NVIDIA Nemotron Speech 600M, streaming RNNT, local (recommended).\n" +
-		"  Whisper — any OpenAI-compatible transcription endpoint (OpenAI, faster-whisper-server, whisper.cpp).\n\n")
+	c.Print("  Nemotron — NVIDIA Nemotron Speech 600M, streaming, local (recommended).\n" +
+		"  Whisper — OpenAI Whisper, local, decoded after you stop talking.\n\n")
 	stt := map[string]any{}
 	stt["provider"] = c.Choice("  Provider", STTProviders, get(existing, "nemotron", "stt", "provider"))
 	if stt["provider"] == "nemotron" {
-		stt["model"] = c.Pick("Nemotron variant:", NemotronModels, get(existing, "int8-dynamic", "stt", "model"))
+		stt["model"] = c.Pick("Nemotron chunk size:", NemotronModels, get(existing, "560ms", "stt", "model"))
 	} else {
-		stt["model"] = c.Pick("Whisper model:", WhisperModels, get(existing, "whisper-1", "stt", "model"))
-		if v := c.Prompt("  Transcription base URL (empty = same as LLM)", get(existing, "", "stt", "base_url"), false); v != "" {
-			stt["base_url"] = v
-		}
+		stt["model"] = c.Pick("Whisper model:", WhisperModels, get(existing, "base.en", "stt", "model"))
 	}
-	stt["device"] = c.Choice("  Compute device", []string{"cpu", "cuda"}, get(existing, "cpu", "stt", "device"))
 	cfg["stt"] = stt
 
 	// ── TTS ──────────────────────────────────────────────────
 	c.Println()
 	c.Rule("Text-to-Speech")
-	c.Print("  Kokoro — fast, high-quality local TTS.\n  Piper — lighter-weight, lower quality.\n  Both need espeak-ng installed for phonemization.\n\n")
-	tts := map[string]any{}
-	tts["provider"] = c.Choice("  Provider", TTSProviders, get(existing, "kokoro", "tts", "provider"))
-	if tts["provider"] == "kokoro" {
-		tts["model"] = c.Pick("Kokoro voice:", KokoroVoices, get(existing, "af_heart", "tts", "model"))
+	c.Print("  Kokoro — fast, high-quality local TTS.\n  Piper — lighter-weight, lower quality.\n\n")
+	ttsCfg := map[string]any{}
+	ttsCfg["provider"] = c.Choice("  Provider", TTSProviders, get(existing, "kokoro", "tts", "provider"))
+	if ttsCfg["provider"] == "kokoro" {
+		ttsCfg["model"] = c.Pick("Kokoro voice:", kokoroVoiceOptions(), get(existing, "af_heart", "tts", "model"))
 	} else {
-		tts["model"] = c.Prompt("  Piper voice model", get(existing, "en_US-lessac-medium", "tts", "model"), true)
+		ttsCfg["model"] = c.Prompt("  Piper voice model", get(existing, "en_US-lessac-medium", "tts", "model"), true)
 	}
-	cfg["tts"] = tts
+	cfg["tts"] = ttsCfg
 
 	// ── Devices ──────────────────────────────────────────────
 	c.Println()
@@ -238,10 +233,24 @@ func Run(c *console.IO, configPath string) (map[string]any, error) {
 		"codec": c.Pick("Audio codec:", Codecs, get(existing, "lc3", "transport", "codec")),
 	}
 
+	// ── Music ────────────────────────────────────────────────
+	c.Println()
+	c.Rule("Music")
+	c.Print("  YouTube Music always works (needs yt-dlp + ffmpeg). Spotify and Apple Music\n  play through a Chromium window you log in to.\n\n")
+	var services []any
+	for _, name := range []string{"spotify", "apple"} {
+		if c.Confirm("  Enable "+name+"?", false) {
+			services = append(services, name)
+		}
+	}
+	if len(services) > 0 {
+		cfg["music"] = map[string]any{"services": services}
+	}
+
 	// ── Summary & Save ───────────────────────────────────────
 	c.Println()
 	c.Println("  Configuration Summary")
-	for _, section := range []string{"llm", "stt", "tts", "devices", "transport"} {
+	for _, section := range []string{"llm", "stt", "tts", "devices", "transport", "music"} {
 		switch v := cfg[section].(type) {
 		case map[string]any:
 			for k, val := range v {

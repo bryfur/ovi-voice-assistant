@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bryfur/ovi-voice-assistant/internal/agent"
 	"github.com/bryfur/ovi-voice-assistant/internal/codec"
 	"github.com/bryfur/ovi-voice-assistant/internal/config"
 	"github.com/bryfur/ovi-voice-assistant/internal/music"
@@ -130,13 +129,6 @@ func (m *DeviceManager) AnnounceAll(ctx context.Context, text string) error {
 func (m *DeviceManager) SetScheduler(s *scheduler.Scheduler) {
 	for _, c := range m.connections {
 		c.SetScheduler(s)
-	}
-}
-
-// SetMemory attaches memory to all device connections.
-func (m *DeviceManager) SetMemory(mem agent.MemoryStore) {
-	for _, c := range m.connections {
-		c.SetMemory(mem)
 	}
 }
 

@@ -2,60 +2,9 @@ package pipeline
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
-
-	"github.com/bryfur/ovi-voice-assistant/internal/transport"
 )
-
-// slowTTS emits the text bytes after a small delay so ordering is observable.
-type slowTTS struct {
-	delay time.Duration
-	mu    sync.Mutex
-	calls []string
-}
-
-func (s *slowTTS) Load() error      { return nil }
-func (s *slowTTS) SampleRate() int  { return 16000 }
-func (s *slowTTS) SampleWidth() int { return 2 }
-func (s *slowTTS) Channels() int    { return 1 }
-func (s *slowTTS) Synthesize(text string) ([]byte, error) {
-	return []byte(text), nil
-}
-func (s *slowTTS) SynthesizeIter(text string, emit func([]byte) error) error {
-	s.mu.Lock()
-	s.calls = append(s.calls, text)
-	s.mu.Unlock()
-	time.Sleep(s.delay)
-	return emit([]byte(text))
-}
-
-type recordingOutput struct {
-	mu     sync.Mutex
-	audio  []string
-	events []transport.EventType
-}
-
-func (r *recordingOutput) SendEvent(_ context.Context, e transport.EventType, _ []byte) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.events = append(r.events, e)
-	return nil
-}
-
-func (r *recordingOutput) SendAudio(_ context.Context, pcm []byte) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.audio = append(r.audio, string(pcm))
-	return nil
-}
-
-func (r *recordingOutput) played() []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]string(nil), r.audio...)
-}
 
 func TestSubmitPlaysText(t *testing.T) {
 	out := &recordingOutput{}
@@ -70,8 +19,7 @@ func TestSubmitPlaysText(t *testing.T) {
 }
 
 func TestSubmitReturnsBeforePlayback(t *testing.T) {
-	out := &recordingOutput{}
-	q := NewSpeechQueue(context.Background(), &slowTTS{delay: 50 * time.Millisecond}, out)
+	q := NewSpeechQueue(context.Background(), &slowTTS{delay: 50 * time.Millisecond}, &recordingOutput{})
 
 	start := time.Now()
 	done := q.Submit("Slow sentence here.")
@@ -93,13 +41,12 @@ func TestSubmissionsPlayInOrder(t *testing.T) {
 	q.Submit("Third sentence here.")
 	q.Stop()
 
-	got := out.played()
-	if len(got) != 3 || got[0] != "First sentence here." || got[2] != "Third sentence here." {
+	if got := out.played(); len(got) != 3 || got[0] != "First sentence here." || got[2] != "Third sentence here." {
 		t.Fatalf("played = %v", got)
 	}
 }
 
-func TestStopDrainsWorkerAndIsIdempotent(t *testing.T) {
+func TestStopDrainsAndRejectsLater(t *testing.T) {
 	out := &recordingOutput{}
 	q := NewSpeechQueue(context.Background(), &slowTTS{delay: 10 * time.Millisecond}, out)
 	q.Submit("Something to say here.")

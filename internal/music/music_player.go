@@ -58,13 +58,6 @@ func NewMusicPlayer(sampleRate, channels int, browsers map[string]BrowserMusic) 
 	}
 }
 
-// Queue returns a copy of the queue.
-func (p *MusicPlayer) Queue() []MusicTrack {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return append([]MusicTrack(nil), p.queue...)
-}
-
 // QueueLen returns the number of queued tracks.
 func (p *MusicPlayer) QueueLen() int {
 	p.mu.Lock()

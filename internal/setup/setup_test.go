@@ -32,15 +32,15 @@ func TestRunFirstTimeWritesConfig(t *testing.T) {
 		"",        // base url
 		"gpt-4o",  // model
 		"whisper", // stt provider
-		"",        // whisper model (default whisper-1)
-		"",        // stt base url
-		"cpu",     // device
+		"",        // whisper model (default base.en)
 		"kokoro",  // tts provider
-		"2",       // kokoro voice af_bella
+		"3",       // kokoro voice af_bella
 		"n",       // flash?
 		"y",       // scan?
 		"all",     // add devices
 		"",        // codec default lc3
+		"y",       // spotify?
+		"n",       // apple?
 		"y",       // save
 	)
 
@@ -53,10 +53,10 @@ func TestRunFirstTimeWritesConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.LLM.APIKey != "sk-test" || s.LLM.Model != "gpt-4o" || s.STT.Provider != "whisper" || s.STT.Model != "whisper-1" {
+	if s.LLM.APIKey != "sk-test" || s.LLM.Model != "gpt-4o" || s.STT.Provider != "whisper" || s.STT.Model != "base.en" {
 		t.Fatalf("loaded = %+v", s)
 	}
-	if s.TTS.Model != "af_bella" || s.Devices != "voice-pe-1.local" || s.Transport.Codec != "lc3" {
+	if s.TTS.Model != "af_bella" || s.Devices != "voice-pe-1.local" || s.Transport.Codec != "lc3" || len(s.Music.Services) != 1 || s.Music.Services[0] != "spotify" {
 		t.Fatalf("loaded = %+v", s)
 	}
 	if cfg["devices"] == nil || !strings.Contains(out.String(), "Configuration saved") || !strings.Contains(out.String(), "****") {
@@ -73,7 +73,7 @@ func TestRunEditKeepsExistingDefaultsAndCanSkipSave(t *testing.T) {
 		"tts":     map[string]any{"provider": "piper", "model": "en_US-amy-low"},
 		"devices": []any{"a.local"},
 	}, path)
-	c, out := scripted("", "", "", "", "", "", "", "", "n", "n", "", "", "n")
+	c, out := scripted("", "", "", "", "", "", "", "n", "n", "", "", "n", "n", "n")
 
 	cfg, err := Run(c, path)
 

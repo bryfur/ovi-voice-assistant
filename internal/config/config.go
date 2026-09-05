@@ -109,42 +109,22 @@ type LLMConfig struct {
 
 // STTConfig configures speech-to-text.
 type STTConfig struct {
-	Provider    string `yaml:"provider"`
-	Model       string `yaml:"model"`
-	Device      string `yaml:"device"` // "cpu" or "cuda"
-	Language    string `yaml:"language"`
-	BeamSize    int    `yaml:"beam_size"`
-	ComputeType string `yaml:"compute_type"`
-	// Whisper (OpenAI-compatible transcription endpoint) only. Empty values
-	// fall back to the LLM base URL / API key.
-	BaseURL string `yaml:"base_url"`
-	APIKey  string `yaml:"api_key"`
+	Provider string `yaml:"provider"` // nemotron | whisper
+	Model    string `yaml:"model"`    // nemotron: chunk (80ms|160ms|560ms|1120ms); whisper: tiny.en, base.en, ...
+	Language string `yaml:"language"` // whisper multilingual models only
 }
 
 // TTSConfig configures text-to-speech.
 type TTSConfig struct {
-	Provider        string  `yaml:"provider"`
-	Model           string  `yaml:"model"`
-	SpeakerID       *int    `yaml:"speaker_id"`
-	LengthScale     float64 `yaml:"length_scale"`
-	SentenceSilence float64 `yaml:"sentence_silence"`
-	// qwen3 only:
-	Language       string `yaml:"language"`
-	ReferenceAudio string `yaml:"reference_audio"`
+	Provider string  `yaml:"provider"` // kokoro | piper
+	Model    string  `yaml:"model"`    // kokoro voice (af_heart) or piper voice (en_US-lessac-medium)
+	Speed    float64 `yaml:"speed"`    // 1.0 = normal
 }
 
 // TransportConfig configures the device transport and codec.
 type TransportConfig struct {
-	Type              string `yaml:"type"`  // "wifi" or "ble"
-	Codec             string `yaml:"codec"` // "pcm", "lc3", "opus"
-	SpeakerSampleRate int    `yaml:"speaker_sample_rate"`
-}
-
-// MicConfig describes the fixed device microphone format.
-type MicConfig struct {
-	SampleRate  int `yaml:"sample_rate"`
-	SampleWidth int `yaml:"sample_width"` // bytes (16-bit)
-	Channels    int `yaml:"channels"`
+	Type  string `yaml:"type"`  // wifi | ble
+	Codec string `yaml:"codec"` // pcm | lc3 | opus
 }
 
 // BLEConfig selects the BLE device.
@@ -153,12 +133,9 @@ type BLEConfig struct {
 	DeviceAddress string `yaml:"device_address"`
 }
 
-// MemoryConfig configures persistent memory.
-type MemoryConfig struct {
-	Enabled        bool   `yaml:"enabled"`
-	DBPath         string `yaml:"db_path"`
-	EmbeddingModel string `yaml:"embedding_model"`
-	BankID         string `yaml:"bank_id"`
+// MusicConfig enables browser-based music services.
+type MusicConfig struct {
+	Services []string `yaml:"services"` // spotify, apple (YouTube Music is always available)
 }
 
 // AutomationsConfig configures the scheduler persistence path.
@@ -196,9 +173,8 @@ type Settings struct {
 	STT         STTConfig         `yaml:"stt"`
 	TTS         TTSConfig         `yaml:"tts"`
 	Transport   TransportConfig   `yaml:"transport"`
-	Mic         MicConfig         `yaml:"mic"`
 	BLE         BLEConfig         `yaml:"ble"`
-	Memory      MemoryConfig      `yaml:"memory"`
+	Music       MusicConfig       `yaml:"music"`
 	Automations AutomationsConfig `yaml:"automations"`
 
 	// Devices — comma-separated string or YAML list: host[:port[:key]]
@@ -220,29 +196,9 @@ func Default() *Settings {
 			Model:        "gpt-4o-mini",
 			Instructions: DefaultInstructions,
 		},
-		STT: STTConfig{
-			Provider:    "nemotron",
-			Model:       "int8-dynamic",
-			Device:      "cpu",
-			Language:    "en",
-			BeamSize:    1,
-			ComputeType: "int8",
-		},
-		TTS: TTSConfig{
-			Provider:        "kokoro",
-			Model:           "af_heart",
-			LengthScale:     1.0,
-			SentenceSilence: 0.1,
-			Language:        "english",
-		},
-		Transport: TransportConfig{Type: "wifi", Codec: "lc3"},
-		Mic:       MicConfig{SampleRate: 16000, SampleWidth: 2, Channels: 1},
-		Memory: MemoryConfig{
-			Enabled:        true,
-			DBPath:         "~/.ovi/memory.db",
-			EmbeddingModel: "sentence-transformers/all-MiniLM-L6-v2",
-			BankID:         "voice-assistant",
-		},
+		STT:         STTConfig{Provider: "nemotron", Model: "560ms", Language: "en"},
+		TTS:         TTSConfig{Provider: "kokoro", Model: "af_heart", Speed: 1},
+		Transport:   TransportConfig{Type: "wifi", Codec: "lc3"},
 		Automations: AutomationsConfig{Path: "~/.ovi/automations.json"},
 	}
 }
@@ -405,20 +361,14 @@ func setField(f reflect.Value, value string) error {
 			return err
 		}
 		f.SetBool(b)
-	case reflect.Pointer:
-		if f.Type().Elem().Kind() == reflect.Int {
-			if strings.TrimSpace(value) == "" {
-				f.Set(reflect.Zero(f.Type()))
-				return nil
+	case reflect.Slice:
+		var items []string
+		for _, item := range strings.Split(value, ",") {
+			if item = strings.TrimSpace(item); item != "" {
+				items = append(items, item)
 			}
-			n, err := strconv.Atoi(strings.TrimSpace(value))
-			if err != nil {
-				return err
-			}
-			f.Set(reflect.ValueOf(&n))
-			return nil
 		}
-		return fmt.Errorf("unsupported pointer type %s", f.Type())
+		f.Set(reflect.ValueOf(items))
 	default:
 		return fmt.Errorf("unsupported field type %s", f.Type())
 	}

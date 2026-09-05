@@ -18,78 +18,54 @@ func tokensOf(parts ...string) <-chan string {
 	return ch
 }
 
-func collectSentences(t *testing.T, parts ...string) []string {
+func sentences(t *testing.T, parts ...string) []string {
 	t.Helper()
 	var out []string
-	err := SplitSentences(context.Background(), tokensOf(parts...), func(s string) error {
+	if err := SplitSentences(context.Background(), tokensOf(parts...), func(s string) error {
 		out = append(out, s)
 		return nil
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 	return out
 }
 
-func TestSplitSentencesAtBoundaries(t *testing.T) {
-	got := collectSentences(t, "Hello there, how ", "are you today? I am ", "doing fine. Thanks!")
-
-	want := []string{"Hello there, how are you today?", "I am doing fine.", "Thanks!"}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("got %v", got)
+func TestSplitSentences(t *testing.T) {
+	cases := map[string][]string{
+		"boundaries": sentences(t, "Hello there, how ", "are you today? I am ", "doing fine. Thanks!"),
+		"listen":     sentences(t, "Do you want more details? [LISTEN]"),
+		"short":      sentences(t, "Dr. Smith is here now."),
+		"remainder":  sentences(t, "no punctuation at all"),
+		"empty":      sentences(t, "   ", "[LISTEN]"),
+	}
+	want := map[string]string{
+		"boundaries": "Hello there, how are you today?|I am doing fine.|Thanks!",
+		"listen":     "Do you want more details?",
+		"short":      "Dr. Smith is here now.",
+		"remainder":  "no punctuation at all",
+		"empty":      "",
+	}
+	for name, got := range cases {
+		if strings.Join(got, "|") != want[name] {
+			t.Errorf("%s: got %v", name, got)
+		}
 	}
 }
 
-func TestSplitSentencesStripsListenToken(t *testing.T) {
-	got := collectSentences(t, "Do you want more details? [LISTEN]")
-
-	if len(got) != 1 || got[0] != "Do you want more details?" {
-		t.Fatalf("got %v", got)
-	}
-}
-
-func TestSplitSentencesShortFragmentsNotSplit(t *testing.T) {
-	got := collectSentences(t, "Dr. Smith is here now.")
-
-	if len(got) != 1 || got[0] != "Dr. Smith is here now." {
-		t.Fatalf("got %v", got)
-	}
-}
-
-func TestSplitSentencesRemainderAndEmpty(t *testing.T) {
-	if got := collectSentences(t, "no punctuation at all"); len(got) != 1 {
-		t.Fatalf("got %v", got)
-	}
-	if got := collectSentences(t, "   ", "[LISTEN]"); len(got) != 0 {
-		t.Fatalf("got %v", got)
-	}
-}
-
-// fakeTTS emits one chunk per sentence containing the sentence bytes.
+// fakeTTS emits the sentence text n times per call.
 type fakeTTS struct {
-	rate   int
-	err    error
-	calls  []string
-	chunks int
+	n   int
+	err error
 }
 
-func (f *fakeTTS) Load() error      { return nil }
-func (f *fakeTTS) SampleRate() int  { return f.rate }
-func (f *fakeTTS) SampleWidth() int { return 2 }
-func (f *fakeTTS) Channels() int    { return 1 }
-func (f *fakeTTS) Synthesize(text string) ([]byte, error) {
-	return SynthesizeAll(f, text)
-}
-func (f *fakeTTS) SynthesizeIter(text string, emit func([]byte) error) error {
-	f.calls = append(f.calls, text)
+func (f *fakeTTS) Load() error     { return nil }
+func (f *fakeTTS) SampleRate() int { return 16000 }
+func (f *fakeTTS) Close()          {}
+func (f *fakeTTS) Synthesize(text string, emit func([]byte) error) error {
 	if f.err != nil {
 		return f.err
 	}
-	n := f.chunks
-	if n == 0 {
-		n = 1
-	}
-	for i := 0; i < n; i++ {
+	for range max(f.n, 1) {
 		if err := emit([]byte(text)); err != nil {
 			return err
 		}
@@ -98,10 +74,9 @@ func (f *fakeTTS) SynthesizeIter(text string, emit func([]byte) error) error {
 }
 
 func TestStreamPipelinesSentences(t *testing.T) {
-	f := &fakeTTS{rate: 16000, chunks: 2}
 	var got []string
 
-	err := Stream(context.Background(), f, tokensOf("First sentence here. ", "Second one there."), func(pcm []byte) error {
+	err := Stream(context.Background(), &fakeTTS{n: 2}, tokensOf("First sentence here. ", "Second one there."), func(pcm []byte) error {
 		got = append(got, string(pcm))
 		return nil
 	})
@@ -111,51 +86,43 @@ func TestStreamPipelinesSentences(t *testing.T) {
 	}
 }
 
-func TestStreamPropagatesSynthesisError(t *testing.T) {
-	f := &fakeTTS{rate: 16000, err: errors.New("boom")}
-
-	err := Stream(context.Background(), f, tokensOf("Hello there friend."), func([]byte) error { return nil })
-
-	if err == nil || !strings.Contains(err.Error(), "boom") {
-		t.Fatalf("got %v", err)
-	}
-}
-
-func TestStreamStopsOnEmitError(t *testing.T) {
-	f := &fakeTTS{rate: 16000, chunks: 3}
-
-	err := Stream(context.Background(), f, tokensOf("One sentence here. Another one there."), func([]byte) error { return errors.New("device gone") })
-
-	if err == nil || err.Error() != "device gone" {
-		t.Fatalf("got %v", err)
-	}
-}
-
-func TestStreamCancelled(t *testing.T) {
+func TestStreamErrors(t *testing.T) {
+	synthErr := Stream(context.Background(), &fakeTTS{err: errors.New("boom")}, tokensOf("Hello there friend."), func([]byte) error { return nil })
+	emitErr := Stream(context.Background(), &fakeTTS{n: 3}, tokensOf("One sentence here. Another one there."), func([]byte) error { return errors.New("device gone") })
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	f := &fakeTTS{rate: 16000}
+	cancelErr := Stream(ctx, &fakeTTS{}, make(chan string), func([]byte) error { return nil })
 
-	err := Stream(ctx, f, make(chan string), func([]byte) error { return nil })
-
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("got %v", err)
+	if synthErr == nil || !strings.Contains(synthErr.Error(), "boom") || emitErr == nil || emitErr.Error() != "device gone" || !errors.Is(cancelErr, context.Canceled) {
+		t.Fatalf("synth=%v emit=%v cancel=%v", synthErr, emitErr, cancelErr)
 	}
 }
 
-func TestCreateProviders(t *testing.T) {
-	s := config.Default()
+func TestNewProviders(t *testing.T) {
 	for _, p := range []string{"kokoro", "piper"} {
-		s.TTS.Provider = p
-		if _, err := Create(s, 16000); err != nil {
+		if _, err := New(config.TTSConfig{Provider: p}, 16000); err != nil {
 			t.Fatal(err)
 		}
 	}
-	s.TTS.Provider = "bogus"
+	if _, err := New(config.TTSConfig{Provider: "bogus"}, 16000); err == nil {
+		t.Fatal("expected error")
+	}
+}
 
-	_, err := Create(s, 16000)
+func TestKokoroVoiceTable(t *testing.T) {
+	if kokoroVoices["af_heart"] != 3 || kokoroVoices["bm_lewis"] != 27 || kokoroVoices["zm_yunyang"] != 52 {
+		t.Fatal("voice ids wrong")
+	}
+	voices := KokoroVoices()
+	if len(voices) != 28 || voices[0] != "af_alloy" || strings.HasPrefix(voices[len(voices)-1], "z") {
+		t.Fatalf("english voices = %v", voices)
+	}
+}
 
-	if err == nil {
+func TestSynthesizeBeforeLoad(t *testing.T) {
+	s, _ := New(config.TTSConfig{Provider: "kokoro"}, 16000)
+
+	if err := s.Synthesize("hi", func([]byte) error { return nil }); err == nil {
 		t.Fatal("expected error")
 	}
 }
