@@ -160,6 +160,9 @@ func Run(c *console.IO, configPath string) (map[string]any, error) {
 	if v := c.Prompt("  Model", get(existing, "gpt-4o-mini", "llm", "model"), true); v != "" {
 		llm["model"] = v
 	}
+	if c.Confirm("  Disable model reasoning/thinking (faster replies)?", get(existing, "true", "llm", "reasoning") == "false") {
+		llm["reasoning"] = false
+	}
 	cfg["llm"] = llm
 
 	// ── STT ──────────────────────────────────────────────────

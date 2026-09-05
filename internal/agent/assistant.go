@@ -25,6 +25,9 @@ const MaxTurns = 10
 // FailureMessage is spoken when the model call fails.
 const FailureMessage = "Sorry, I could not process that."
 
+// LevelTrace logs every streamed LLM chunk; enabled by `ovi --verbose`.
+const LevelTrace = slog.LevelDebug - 4
+
 // SubAgent is a nested agent exposed to the main agent as a tool.
 type SubAgent struct {
 	Name         string             `json:"name"`
@@ -65,8 +68,9 @@ type messages = []openai.ChatCompletionMessageParamUnion
 
 // Assistant runs the model with tools and keeps per-session history.
 type Assistant struct {
-	cfg    config.LLMConfig
-	client openai.Client
+	cfg     config.LLMConfig
+	client  openai.Client
+	reqOpts []option.RequestOption // per-request extras, e.g. thinking off
 
 	tools   []Tool // builtins + sub-agents
 	mcp     []*mcp.Client
@@ -88,6 +92,14 @@ func (a *Assistant) Load() error {
 		opts = append(opts, option.WithAPIKey(a.cfg.APIKey))
 	}
 	a.client = openai.NewClient(opts...)
+	a.reqOpts = nil
+	if !a.cfg.Reasoning && !strings.Contains(a.cfg.BaseURL, "api.openai.com") && a.cfg.BaseURL != "" {
+		// Local OpenAI-compatible servers: the standard field alone is often
+		// ignored, so also send the llama.cpp/vLLM/LM Studio and ollama forms.
+		a.reqOpts = append(a.reqOpts,
+			option.WithJSONSet("chat_template_kwargs", map[string]any{"enable_thinking": false}),
+			option.WithJSONSet("think", false))
+	}
 
 	servers, err := mcp.ParseServers(a.cfg.MCPServers)
 	if err != nil {
@@ -187,10 +199,13 @@ func (a *Assistant) loop(ctx context.Context, msgs *messages, defs []openai.Chat
 		if len(defs) > 0 {
 			params.Tools = defs
 		}
+		if !a.cfg.Reasoning {
+			params.ReasoningEffort = shared.ReasoningEffortNone
+		}
 		slog.Debug("LLM request", "model", a.cfg.Model, "messages", len(*msgs), "tools", len(defs))
 		start := time.Now()
-		debug := slog.Default().Enabled(ctx, slog.LevelDebug)
-		stream := a.client.Chat.Completions.NewStreaming(ctx, params)
+		trace := slog.Default().Enabled(ctx, LevelTrace)
+		stream := a.client.Chat.Completions.NewStreaming(ctx, params, a.reqOpts...)
 		var acc openai.ChatCompletionAccumulator
 		var chunks int
 		var firstContent time.Duration
@@ -212,10 +227,10 @@ func (a *Assistant) loop(ctx context.Context, msgs *messages, defs []openai.Chat
 					onToken(delta)
 				}
 			}
-			if debug {
+			if trace {
 				// The raw delta shows fields the SDK does not model, such as
 				// reasoning_content from thinking models.
-				slog.Debug("LLM chunk", "t", time.Since(start).Round(time.Millisecond), "delta", truncate(raw, 300))
+				slog.Log(ctx, LevelTrace, "LLM chunk", "t", time.Since(start).Round(time.Millisecond), "delta", truncate(raw, 300))
 			}
 		}
 		if err := stream.Err(); err != nil {

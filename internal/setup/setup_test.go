@@ -31,6 +31,7 @@ func TestRunFirstTimeWritesConfig(t *testing.T) {
 		"sk-test", // api key
 		"",        // base url
 		"gpt-4o",  // model
+		"y",       // disable reasoning
 		"whisper", // stt provider
 		"",        // whisper model (default base.en)
 		"kokoro",  // tts provider
@@ -53,7 +54,7 @@ func TestRunFirstTimeWritesConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.LLM.APIKey != "sk-test" || s.LLM.Model != "gpt-4o" || s.STT.Provider != "whisper" || s.STT.Model != "base.en" {
+	if s.LLM.APIKey != "sk-test" || s.LLM.Model != "gpt-4o" || s.LLM.Reasoning || s.STT.Provider != "whisper" || s.STT.Model != "base.en" {
 		t.Fatalf("loaded = %+v", s)
 	}
 	if s.TTS.Model != "af_bella" || s.Devices != "voice-pe-1.local" || s.Transport.Codec != "lc3" || len(s.Music.Services) != 1 || s.Music.Services[0] != "spotify" {
@@ -73,7 +74,7 @@ func TestRunEditKeepsExistingDefaultsAndCanSkipSave(t *testing.T) {
 		"tts":     map[string]any{"provider": "piper", "model": "en_US-amy-low"},
 		"devices": []any{"a.local"},
 	}, path)
-	c, out := scripted("", "", "", "", "", "", "", "n", "n", "", "", "n", "n", "n")
+	c, out := scripted("", "", "", "", "", "", "", "", "n", "n", "", "", "n", "n", "n")
 
 	cfg, err := Run(c, path)
 

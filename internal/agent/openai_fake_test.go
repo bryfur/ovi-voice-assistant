@@ -22,9 +22,12 @@ type fakeCall struct{ id, name, args string }
 
 // request is what the fake server saw for one completion call.
 type request struct {
-	Messages []map[string]any `json:"messages"`
-	Tools    []map[string]any `json:"tools"`
-	Stream   bool             `json:"stream"`
+	Messages        []map[string]any `json:"messages"`
+	Tools           []map[string]any `json:"tools"`
+	Stream          bool             `json:"stream"`
+	ReasoningEffort string           `json:"reasoning_effort"`
+	TemplateKwargs  map[string]any   `json:"chat_template_kwargs"`
+	Think           *bool            `json:"think"`
 }
 
 func (r request) role(i int) string    { return fmt.Sprint(r.Messages[i]["role"]) }

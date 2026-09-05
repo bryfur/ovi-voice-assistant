@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bryfur/ovi-voice-assistant/internal/agent"
 	"github.com/bryfur/ovi-voice-assistant/internal/config"
 	"github.com/bryfur/ovi-voice-assistant/internal/console"
 	"github.com/bryfur/ovi-voice-assistant/internal/discovery"
@@ -43,6 +44,7 @@ func run(args []string) error {
 		setupCmd = fs.Bool("setup", false, "Run the interactive setup wizard.")
 		flashCmd = fs.Bool("flash", false, "Flash ESPHome firmware to a device.")
 		debug    = fs.Bool("debug", false, "Enable debug logging.")
+		verbose  = fs.Bool("verbose", false, "Log every LLM stream chunk (implies --debug).")
 	)
 	overrides := map[string]string{}
 	for key, help := range map[string]string{
@@ -72,7 +74,7 @@ func run(args []string) error {
 		devices = append(devices, fs.Arg(0))
 		args = fs.Args()[1:]
 	}
-	setupLogging(*debug)
+	setupLogging(*debug, *verbose)
 
 	switch {
 	case *genKey:
@@ -100,16 +102,22 @@ func run(args []string) error {
 	return serve(settings, devices)
 }
 
-func setupLogging(debug bool) {
+func setupLogging(debug, verbose bool) {
 	level := slog.LevelInfo
-	if debug {
+	switch {
+	case verbose:
+		level = agent.LevelTrace
+	case debug:
 		level = slog.LevelDebug
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: level,
 		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
-			if a.Key == slog.TimeKey {
-				a.Value = slog.StringValue(a.Value.Time().Format("15:04:05"))
+			switch {
+			case a.Key == slog.TimeKey:
+				a.Value = slog.StringValue(a.Value.Time().Format("15:04:05.000"))
+			case a.Key == slog.LevelKey && a.Value.Any() == agent.LevelTrace:
+				a.Value = slog.StringValue("TRACE")
 			}
 			return a
 		},

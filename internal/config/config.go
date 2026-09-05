@@ -105,6 +105,10 @@ type LLMConfig struct {
 	Instructions string `yaml:"instructions"`
 	MCPServers   string `yaml:"mcp_servers"`
 	Agents       string `yaml:"agents"`
+	// Reasoning false asks thinking models not to think before answering
+	// (reasoning_effort=none, plus enable_thinking=false / think=false for
+	// local servers). Leave true to send nothing.
+	Reasoning bool `yaml:"reasoning"`
 }
 
 // STTConfig configures speech-to-text.
@@ -196,6 +200,7 @@ func Default() *Settings {
 		LLM: LLMConfig{
 			Model:        "gpt-4o-mini",
 			Instructions: DefaultInstructions,
+			Reasoning:    true,
 		},
 		STT:         STTConfig{Provider: "nemotron", Model: "560ms", Language: "en", Silence: 0.75},
 		TTS:         TTSConfig{Provider: "kokoro", Model: "af_heart", Speed: 1},

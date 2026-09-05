@@ -166,6 +166,23 @@ func contains(list []string, s string) bool {
 	return false
 }
 
+func TestReasoningOffSendsDisableFields(t *testing.T) {
+	f := newFakeOpenAI(t, turn{text: "ok"}, turn{text: "ok"})
+	off := newAssistant(t, f, func(c *config.LLMConfig) { c.Reasoning = false })
+	on := newAssistant(t, f, nil)
+
+	off.RunText(context.Background(), "x", nil)
+	on.RunText(context.Background(), "x", nil)
+
+	got := f.Reqs[0]
+	if got.ReasoningEffort != "none" || got.TemplateKwargs["enable_thinking"] != false || got.Think == nil || *got.Think {
+		t.Fatalf("reasoning-off request = %+v", got)
+	}
+	if def := f.Reqs[1]; def.ReasoningEffort != "" || def.TemplateKwargs != nil || def.Think != nil {
+		t.Fatalf("default request must not mention reasoning: %+v", def)
+	}
+}
+
 func TestParseSubAgentsFromFileAndValidation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agents.json")
 	os.WriteFile(path, []byte(`[{"name":"a","mcp_servers":[{"command":"npx","args":["x"]}]}]`), 0o644)

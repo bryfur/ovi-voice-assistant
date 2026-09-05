@@ -71,7 +71,7 @@ func TestParseDevicesNonIntegerPort(t *testing.T) {
 func TestDefaults(t *testing.T) {
 	s := Default()
 
-	if s.LLM.Model != "gpt-4o-mini" || s.STT.Provider != "nemotron" || s.TTS.Provider != "kokoro" {
+	if s.LLM.Model != "gpt-4o-mini" || !s.LLM.Reasoning || s.STT.Provider != "nemotron" || s.TTS.Provider != "kokoro" {
 		t.Fatalf("unexpected defaults: %+v", s)
 	}
 	if s.Transport.Codec != "lc3" || s.STT.Model != "560ms" || s.STT.Silence != 0.75 || s.TTS.Speed != 1 {
@@ -116,13 +116,13 @@ func TestLoadEnvOverridesYaml(t *testing.T) {
 	s, err := Load(LoadOptions{
 		ConfigPath:  path,
 		SkipEnvFile: true,
-		Environ:     []string{"OVI_LLM__MODEL=gpt-4o", "OVI_DEVICES=x.local", "OVI_MUSIC__SERVICES=spotify, apple", "OVI_TTS__SPEED=1.2"},
+		Environ:     []string{"OVI_LLM__MODEL=gpt-4o", "OVI_LLM__REASONING=false", "OVI_DEVICES=x.local", "OVI_MUSIC__SERVICES=spotify, apple", "OVI_TTS__SPEED=1.2"},
 	})
 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.LLM.Model != "gpt-4o" || s.Devices != "x.local" || len(s.Music.Services) != 2 || s.Music.Services[1] != "apple" || s.TTS.Speed != 1.2 {
+	if s.LLM.Model != "gpt-4o" || s.LLM.Reasoning || s.Devices != "x.local" || len(s.Music.Services) != 2 || s.Music.Services[1] != "apple" || s.TTS.Speed != 1.2 {
 		t.Fatalf("got %+v", s)
 	}
 }
