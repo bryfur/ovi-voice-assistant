@@ -1,6 +1,6 @@
 # Ovi — Open Voice Assistant
 
-A standalone AI voice assistant that connects directly to ESPHome devices over WiFi or BLE. No Home Assistant required.
+A standalone AI voice assistant that connects directly to ESPHome devices over WiFi or BLE. No Home Assistant required. Written in Go — a single static-ish binary plus a handful of native audio libraries.
 
 Handles the full voice pipeline: wake word detection (on-device) → speech-to-text → AI agent → text-to-speech, with audio streamed back to the device speaker.
 
@@ -11,19 +11,19 @@ ESPHome Device (wake word) ──► mic audio over WiFi/BLE ──► Ovi Serve
                                                               │
                                                         STT (Nemotron / Whisper)
                                                               │
-                                                        Agent (OpenAI Agents SDK)
+                                                        Agent (OpenAI-compatible, tool calling)
                                                               │
                                                         TTS (Kokoro / Piper)
                                                               │
 ESPHome Device (speaker)   ◄── encoded audio ◄───────────────┘
 ```
 
-- **STT**: [Nemotron Speech 600M](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b) streaming RNNT (default) or [faster-whisper](https://github.com/SYSTRAN/faster-whisper). Both use Silero VAD. CPU inference.
-- **Agent**: [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) — works with any OpenAI-compatible endpoint (OpenAI, ollama, vLLM, LM Studio, etc.). Supports MCP tools, sub-agents, and session memory.
-- **TTS**: [Kokoro](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) 82M ONNX int8 (default) or [Piper](https://github.com/rhasspy/piper) ONNX voices. CPU inference.
+- **STT**: [Nemotron Speech 600M](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b) streaming RNNT (default, local ONNX inference) or Whisper via any OpenAI-compatible `/audio/transcriptions` endpoint (OpenAI, faster-whisper-server, whisper.cpp server, LocalAI…). Both use Silero VAD.
+- **Agent**: built-in tool-calling loop over the OpenAI chat completions API — works with any OpenAI-compatible endpoint (OpenAI, ollama, vLLM, LM Studio, etc.). Supports MCP tools (stdio), sub-agents, and per-session memory.
+- **TTS**: [Kokoro](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) 82M ONNX int8 (default) or [Piper](https://github.com/rhasspy/piper) ONNX voices. CPU inference; phonemization via `espeak-ng`.
 - **Transport**: WiFi (plain TCP) or BLE (GATT). Audio codecs: PCM, LC3, Opus.
-- **Music**: YouTube Music, Spotify, Apple Music via browser automation. Multi-room synchronized playback.
-- **Memory**: Persistent fact extraction and recall (SQLite + embeddings).
+- **Music**: YouTube Music (`yt-dlp` + `ffmpeg`), Spotify and Apple Music via browser tab capture. Multi-room synchronized playback.
+- **Memory**: Persistent fact extraction and recall (SQLite + local embeddings).
 - **Automations**: Cron-based proactive announcements.
 
 ## Supported devices
@@ -38,16 +38,23 @@ ESPHome Device (speaker)   ◄── encoded audio ◄────────�
 
 ## Requirements
 
-- Python 3.14+, [uv](https://docs.astral.sh/uv/)
+- Go 1.24+ and a C compiler (cgo)
+- Native libraries: `liblc3`, `libopus`, `libopusfile` (with `pkg-config` files)
+  - Arch: `pacman -S liblc3 opus opusfile`
+  - Debian/Ubuntu: `apt install liblc3-dev libopus-dev libopusfile-dev`
+  - macOS: `brew install liblc3 opus opusfile`
+- Runtime tools: `espeak-ng` (TTS phonemization), `ffmpeg` and `yt-dlp` (music)
+- ONNX Runtime 1.29.0 — downloaded automatically into `~/.cache/ovi/onnxruntime` on first run (or point `OVI_ONNXRUNTIME_LIB` at an existing `libonnxruntime.so`)
 - An ESPHome-compatible device (see above)
 - An OpenAI-compatible LLM endpoint
+- [ESPHome](https://esphome.io) (Python) only if you want to flash firmware from `ovi --flash`
 
 ## Quick start
 
-### 1. Install
+### 1. Build
 
 ```bash
-uv sync --group dev
+go install ./cmd/ovi
 ```
 
 ### 2. Flash a device
@@ -59,10 +66,16 @@ wifi_ssid: "YourNetwork"
 wifi_password: "YourPassword"
 ```
 
-Flash the device:
+Flash the device (needs `esphome` installed, e.g. `pipx install esphome`):
 
 ```bash
-uv run esphome run esphome/voice-pe.yaml
+esphome run esphome/voice-pe.yaml
+```
+
+Or use the guided flow, which also writes `secrets.yaml` and adds the device to your config:
+
+```bash
+ovi --flash
 ```
 
 ### 3. Configure
@@ -149,12 +162,15 @@ llm:
 
 stt:
   provider: nemotron    # nemotron, whisper
-  model: int8-dynamic   # int8-dynamic, int8-static, fp16, fp32
+  model: int8-dynamic   # nemotron: int8-dynamic, int8-static, fp16, fp32
+                        # whisper: model name for the transcription endpoint (e.g. whisper-1)
   device: cpu           # cpu, cuda
+  base_url: ""          # whisper only: transcription endpoint (empty = llm.base_url)
+  api_key: ""           # whisper only (empty = llm.api_key)
 
 tts:
   provider: kokoro      # kokoro, piper
-  model: af_heart
+  model: af_heart       # kokoro voice, or piper voice like en_US-lessac-medium
 
 devices: voice-pe-XXXX.local
 
@@ -172,7 +188,7 @@ Override any config value using the `OVI_` prefix and `__` as the nesting delimi
 
 ```bash
 OVI_LLM__MODEL=gpt-4o-mini ovi             # override LLM model
-OVI_STT__PROVIDER=nemotron ovi              # switch STT provider
+OVI_STT__PROVIDER=whisper ovi              # switch STT provider
 OVI_TRANSPORT__CODEC=opus ovi               # change codec
 OVI_LLM__API_KEY=sk-... ovi                 # set API key without saving to file
 ```
@@ -182,7 +198,7 @@ OVI_LLM__API_KEY=sk-... ovi                 # set API key without saving to file
 CLI arguments take highest priority:
 
 ```bash
-ovi --agent-model gpt-4o --codec opus --stt-model small.en
+ovi --agent-model gpt-4o --codec opus --stt-model whisper-1
 ```
 
 Run `ovi --help` for all options.
@@ -194,9 +210,11 @@ Run `ovi --help` for all options.
 | `~/.ovi/config.yaml` | Configuration file |
 | `~/.ovi/memory.db` | Persistent memory (SQLite) |
 | `~/.ovi/automations.json` | Scheduled automations |
-| `~/.cache/ovi/` | Model caches (whisper, nemotron, embeddings) |
-| `~/.cache/kokoro/` | Kokoro TTS model cache |
-| `~/.cache/piper-voices/` | Piper TTS voice cache |
+| `~/.cache/ovi/onnxruntime/` | ONNX Runtime shared library |
+| `~/.cache/ovi/nemotron/`, `~/.cache/ovi/silero/` | STT and VAD models |
+| `~/.cache/ovi/kokoro/`, `~/.cache/ovi/piper/` | TTS models and voices |
+| `~/.cache/ovi/fastembed/` | Embedding model |
+| `~/.config/ovi/` | Browser profiles for Spotify / Apple Music |
 
 ## Encryption
 
@@ -224,7 +242,6 @@ ovi voice-pe-XXXX.local::KEY
 
 The voice assistant includes 19 built-in tools:
 
-- **Speech**: `say` (immediate speech)
 - **Timers**: `set_timer`, `check_timer`, `cancel_timer`
 - **Time**: `get_current_time`
 - **Math**: `calculate`, `unit_convert`
@@ -232,7 +249,7 @@ The voice assistant includes 19 built-in tools:
 - **Music**: `play_music`, `pause_music`, `resume_music`, `skip_track`, `stop_music`, `now_playing`
 - **Automations**: `create_automation`, `list_automations`, `delete_automation`, `toggle_automation`
 
-Additional tools via MCP servers and sub-agents.
+Additional tools via MCP servers (`mcp.json`) and sub-agents (`agents.json`).
 
 ## Device features
 
@@ -247,25 +264,37 @@ The ESPHome firmware provides:
 - Multi-device wake word arbitration (closest device wins)
 - Synchronized multi-room music playback (NTP-based)
 
+## Development
+
+```bash
+go build ./...                                        # build
+go vet ./... && gofmt -l internal cmd                 # lint
+go test ./...                                         # unit tests (no network, no models)
+OVI_TEST_MODELS=1 go test ./internal/stt/ -run RealModel   # downloads ONNX Runtime + Silero and runs them
+```
+
 ## Project structure
 
 ```
-src/ovi_voice_assistant/
-    __main__.py              CLI entry point (ovi command)
-    config.py                Settings (OVI_ env prefix)
-    voice_assistant.py       STT → Agent → TTS pipeline
-    device_connection.py     Device transport bridge + codec
-    device_manager.py        Multi-device management + wake arbitration
-    discovery.py             mDNS device discovery
-    scheduler.py             Cron automations
-    pipeline_output.py       Pipeline event types
-    codec/                   PCM, LC3, Opus encoding/decoding
-    transport/               WiFi (TCP) and BLE (GATT) transports
-    stt/                     Nemotron + Whisper speech-to-text
-    tts/                     Kokoro + Piper text-to-speech
-    agent/                   OpenAI Agents SDK + MCP tools
-    memory/                  SQLite fact store + embeddings
-    music/                   YouTube, Spotify, Apple Music
+cmd/ovi/                     CLI entry point (ovi command)
+internal/
+    config/                  Layered settings (YAML, .env, OVI_ env, CLI)
+    transport/               WiFi (TCP) and BLE (GATT) transports, wire events
+    codec/                   PCM, LC3 (cgo liblc3), Opus (cgo libopus)
+    audio/                   PipelineOutput interface
+    pipeline/                STT → Agent → TTS, paced encoding output, speech queue
+    device/                  Device connection state machine + wake arbitration
+    stt/                     Silero VAD, Nemotron (ONNX), Whisper (API)
+    tts/                     Sentence streaming, espeak-ng phonemizer, Kokoro, Piper
+    agent/                   Tool-calling agent, built-in tools, sub-agents
+    llm/                     OpenAI-compatible chat/transcription client
+    mcp/                     MCP stdio client
+    memory/                  SQLite fact store, embeddings, recall/retain
+    music/                   YouTube (yt-dlp), Spotify/Apple (browser capture), sync group
+    scheduler/               Cron automations
+    discovery/               mDNS device discovery
+    setup/, flash/, console/ Interactive wizard, ESPHome flashing, prompts
+    ort/, dsp/, download/    ONNX Runtime loader, resampling/FFT, model downloads
 esphome/
     components/              Custom ESPHome components
         ovi_voice_assistant/ Device-side voice pipeline
@@ -277,3 +306,10 @@ esphome/
     crowpanel-9.yaml         CrowPanel 9" (ESP32-P4)
     crowpanel-s3-5.yaml      CrowPanel Advance 5" (ESP32-S3)
 ```
+
+## Migrating from the Python version
+
+- Configuration files (`~/.ovi/config.yaml`, `automations.json`, `memory.db`) are compatible.
+- The Whisper provider now talks to a transcription API instead of running faster-whisper in-process; run a local server (e.g. faster-whisper-server or whisper.cpp) or use OpenAI, and set `stt.base_url` if it differs from your LLM endpoint.
+- The experimental Qwen3 TTS provider was not ported.
+- `espeak-ng`, `ffmpeg` and `yt-dlp` must be installed on the system; previously the Python packages bundled equivalents.

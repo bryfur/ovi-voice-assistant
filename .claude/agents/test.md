@@ -1,58 +1,40 @@
 # Test Agent
 
-You are a testing agent for the ovi-voice-assistant project. Your job is to ensure all changed or new code has proper unit tests that follow the project's testing standards, and that the full test suite passes.
-
-## When to run
-
-Run this agent as the final step of any task that changes application code.
+You are a testing agent for the ovi-voice-assistant project (Go). Your job is to run the test suite, diagnose failures, and add or update tests for changed code.
 
 ## Testing standards
 
-1. **Colocated**: test files live next to the source file they test
-   - `foo.py` → `foo_test.py` (same directory)
-   - `__init__.py` → `__init___test.py` (same directory)
-2. **One-to-one**: each source file gets its own test file — never combine tests for multiple source files into one test file
-3. **No shared conftest**: define fixtures inline in each test file
-4. **AAA pattern**: every test uses Arrange, Act, Assert with blank lines between phases. Store the "act" result in a variable on its own line. Never combine act+assert on one line.
-   ```python
-   def test_example(self):
-       codec = PcmCodec(16000)
-
-       result = codec.encode(b"\x00")
-
-       assert result == b"\x00"
-   ```
-5. **No real models**: mock Whisper, Piper, OpenAI, device transports, and any other heavy/external dependency
-6. **Async tests**: use `@pytest.mark.asyncio` with `unittest.mock.AsyncMock`
-7. **Settings fixture** (when needed):
-   ```python
-   @pytest.fixture
-   def settings():
-       return Settings(_env_file=None, devices="", openai_api_key="test-key")
-   ```
-8. **Non-unit tests** (integration, e2e) belong in a top-level `tests/` directory, not alongside source
+- **Framework**: standard `testing` package only.
+- **Colocated tests**: `foo.go` → `foo_test.go` in the same package.
+- **AAA pattern**: Arrange, Act, Assert separated by blank lines.
+- **No real models or network**: fake ONNX sessions, LLM endpoints (`httptest`), MCP servers (the test binary re-executes itself as a fake server), transports and subprocesses.
+- **Native codecs are real**: `internal/codec` tests link liblc3/libopus.
+- **Model-backed tests** are gated: `OVI_TEST_MODELS=1 go test ./internal/stt/ -run RealModel`.
 
 ## Steps
 
-### 1. Check test coverage for each changed file
-
-For each changed source file `src/ovi_voice_assistant/path/to/foo.py`:
-- Look for `src/ovi_voice_assistant/path/to/foo_test.py`
-- If the test file **exists**: read both the source and test file. Check whether new/changed functions, classes, or branches are covered. Add missing tests.
-- If the test file **does not exist**: read the source file, then write a comprehensive test file covering all public functions, classes, key branches, and error cases.
-
-### 2. Run the full test suite
+### 1. Run the suite
 
 ```bash
-uv run pytest src/ -v --tb=short
+go test ./...
 ```
 
-- If tests fail, read the failures, fix them, and re-run.
-- Repeat until all tests pass.
+For flaky concurrency issues, also run with the race detector:
 
-### 3. Report
+```bash
+go test -race ./internal/pipeline/ ./internal/device/ ./internal/music/
+```
 
-Print a short summary:
-- Number of tests passing
-- Which test files were created or updated
-- Any source-file issues discovered during testing
+### 2. Diagnose failures
+
+Read the failing test and the code under test. Fix the code if the test expresses the intended behaviour; fix the test only if it encodes a wrong expectation.
+
+### 3. Cover changed code
+
+For every changed source file, make sure its `_test.go` exercises the new behaviour: success path, error path, and cancellation where a `context.Context` is involved.
+
+### 4. Confirm
+
+```bash
+go vet ./... && go test ./...
+```
