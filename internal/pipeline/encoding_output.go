@@ -5,6 +5,7 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -132,6 +133,7 @@ func (o *EncodingOutput) run(queue chan outputItem, stop chan struct{}, done cha
 			}
 			if frameCount == 0 {
 				t0 = o.Now()
+				slog.Debug("First audio frame to device")
 			}
 			frameCount++
 			_ = o.transport.SendAudio(encoded)

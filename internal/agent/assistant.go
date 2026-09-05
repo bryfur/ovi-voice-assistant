@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -186,15 +187,35 @@ func (a *Assistant) loop(ctx context.Context, msgs *messages, defs []openai.Chat
 		if len(defs) > 0 {
 			params.Tools = defs
 		}
+		slog.Debug("LLM request", "model", a.cfg.Model, "messages", len(*msgs), "tools", len(defs))
+		start := time.Now()
+		debug := slog.Default().Enabled(ctx, slog.LevelDebug)
 		stream := a.client.Chat.Completions.NewStreaming(ctx, params)
 		var acc openai.ChatCompletionAccumulator
+		var chunks int
+		var firstContent time.Duration
 		for stream.Next() {
 			chunk := stream.Current()
+			chunks++
 			acc.AddChunk(chunk)
-			if onToken != nil && len(chunk.Choices) > 0 {
-				if c := chunk.Choices[0].Delta.Content; c != "" {
-					onToken(c)
+			var delta string
+			raw := chunk.RawJSON()
+			if len(chunk.Choices) > 0 {
+				delta = chunk.Choices[0].Delta.Content
+				raw = chunk.Choices[0].Delta.RawJSON()
+			}
+			if delta != "" {
+				if firstContent == 0 {
+					firstContent = time.Since(start)
 				}
+				if onToken != nil {
+					onToken(delta)
+				}
+			}
+			if debug {
+				// The raw delta shows fields the SDK does not model, such as
+				// reasoning_content from thinking models.
+				slog.Debug("LLM chunk", "t", time.Since(start).Round(time.Millisecond), "delta", truncate(raw, 300))
 			}
 		}
 		if err := stream.Err(); err != nil {
@@ -204,6 +225,9 @@ func (a *Assistant) loop(ctx context.Context, msgs *messages, defs []openai.Chat
 			return errors.New("empty completion")
 		}
 		msg := acc.Choices[0].Message
+		slog.Debug("LLM response", "chunks", chunks, "first_content", firstContent.Round(time.Millisecond),
+			"total", time.Since(start).Round(time.Millisecond), "finish", acc.Choices[0].FinishReason,
+			"tool_calls", len(msg.ToolCalls), "content", truncate(msg.Content, 200))
 		*msgs = append(*msgs, msg.ToParam())
 		if len(msg.ToolCalls) == 0 {
 			return nil
@@ -264,6 +288,13 @@ func (a *Assistant) toolset(tools []Tool, servers []*mcp.Client) ([]openai.ChatC
 		}
 	}
 	return defs, handlers
+}
+
+func truncate(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return s
 }
 
 // subAgentTool exposes a sub-agent as a tool with a single "input".
